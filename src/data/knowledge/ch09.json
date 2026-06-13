@@ -1,0 +1,320 @@
+{
+  "chapter": 9,
+  "title": "Runtime & Deployment",
+  "concepts": [
+    {
+      "concept_id": "RUN-001",
+      "title": "CloudHub 1.0: Workers, VPCs & the Shared LB",
+      "card": {
+        "what": "CloudHub 1.0 runs each app on dedicated worker VMs (0.1–16 vCores) in MuleSoft's AWS-based iPaaS. Networking via shared or dedicated load balancers, optional VPCs peered to your cloud/on-prem, with multi-worker horizontal scaling and zero-downtime restarts.",
+        "how": "Each worker = isolated VM running one app on one Mule runtime. The shared LB routes {app}.{region}.cloudhub.io:443 → worker port 8081 (http.port) / 8082 (https). Multi-worker apps get round-robin distribution. VPC gives private address space, VPN/peering/Direct-Connect to data centers; the Dedicated LB (DLB) lives in the VPC for custom domains/certs, mTLS, and path-based routing to internal (8091/8092) ports.",
+        "exam_traps": [
+          "Workers of one app do NOT share memory/state — Object Store v2, persistent VM queues (limited), or external stores carry shared state. 'In-memory cache consistent across workers' is automatically wrong.",
+          "Shared LB: no custom certs/domains, no client-cert validation, no path rewriting — those require a DLB inside a VPC.",
+          "0.1/0.2 vCore workers don't have guaranteed CPU (burstable) — sizing answers for production throughput start at 1 vCore typically.",
+          "CloudHub workers are per-region singletons of the app — multi-region DR is two deployments + external routing (Route53-style), not a checkbox."
+        ],
+        "hands_on": "Deploy an app at 2 workers, 0.2 vCore. Hit the shared LB URL repeatedly and log worker IDs to observe round-robin. Persist a counter to Object Store v2 and confirm both workers read the same value, while an in-memory variable diverges per worker.",
+        "deep_dive": "Worker internals: app files + runtime on a VM with fixed heap by size; persistent queues (VM) opt-in feature, monitoring agents built in. Static IPs available per app for egress allow-listing.\n\nDLB details: TLS termination with your certs (from Secrets Manager), client-cert verification, mapping rules ({app}.lb.anypointdns.net or custom CNAME → app workers' internal 8091/8092). Internal-only apps: listen on 8091/8092 and they're reachable only via DLB/VPC — the standard 'private process API' answer.\n\nVPC sizing: CIDR fixed at creation (plan growth!), one VPC per region per business need, firewall rules per VPC. High-availability: ≥2 workers spread across AZs automatically. Zero-downtime: rolling restarts keep one worker serving."
+      },
+      "quiz": [
+        {
+          "id": "RUN-001-q1",
+          "q": "An app caches reference data in a HashMap. Scaled to 3 workers, cache hit-rates collapse and data is inconsistent. Why?",
+          "options": [
+            "GC pauses",
+            "Each worker has isolated memory — per-worker caches diverge; use Object Store v2 or an external cache",
+            "The LB is sticky",
+            "HashMaps aren't thread-safe"
+          ],
+          "answer": 1,
+          "explanation": "No shared memory across workers. Shared state must be externalized."
+        },
+        {
+          "id": "RUN-001-q2",
+          "q": "Requirement: custom domain api.acme.com with your own certificate and mTLS from partners. CloudHub 1.0 answer?",
+          "options": [
+            "Shared LB with CNAME",
+            "Dedicated Load Balancer in a VPC with certs from Secrets Manager and client-cert verification",
+            "CloudFront in front of shared LB",
+            "Not possible"
+          ],
+          "answer": 1,
+          "explanation": "Custom TLS/mTLS/domains are DLB capabilities; the shared LB is fixed-domain, server-cert-only."
+        },
+        {
+          "id": "RUN-001-q3",
+          "q": "A process API must be unreachable from the public internet but callable by other VPC apps. Standard CloudHub 1.0 technique?",
+          "options": [
+            "Firewall the shared LB",
+            "Listen on port 8091/8092 (internal) so only VPC/DLB traffic reaches it",
+            "Obscure URL path",
+            "IP allowlist policy only"
+          ],
+          "answer": 1,
+          "explanation": "Internal ports bypass the shared LB exposure — the canonical private-API pattern (optionally + DLB internal mapping)."
+        }
+      ],
+      "difficulty": "advanced",
+      "prerequisites": [],
+      "ai_tags": ["cloudhub", "workers", "vpc", "dlb", "scaling"]
+    },
+    {
+      "concept_id": "RUN-002",
+      "title": "CloudHub 2.0: Private Spaces, Replicas & Ingress",
+      "card": {
+        "what": "CloudHub 2.0 is the container-native successor: apps run as REPLICAS (containers) on shared or private spaces (managed K8s under the hood), with built-in ingress, per-app TLS, rolling/recreate deployments, and finer vCore granularity.",
+        "how": "Private Space = your isolated network env (like VPC+DLB merged): custom domains, TLS contexts, VPN/transit gateway connectivity, firewall rules. Apps deploy from Exchange artifacts into a space; replicas (0.1–4+ vCore) auto-distribute across AZs; ingress handles HTTP routing with path rules. Deployment strategies: rolling (zero downtime, needs ≥2... actually works with 1+ via surge) or recreate. Clustering toggle enables Mule HA features across replicas.",
+        "exam_traps": [
+          "CH2.0 replicas ≈ CH1.0 workers but: ingress replaces shared/dedicated LB duality, TLS termination is configured per space/app (no separate DLB product), and inbound mTLS is a space ingress setting.",
+          "Persistent VM queues do NOT exist on CH2.0 — durable messaging means Anypoint MQ/external brokers. Object Store v2 remains.",
+          "CH2.0 supports deploying ONLY from Exchange-published artifacts in CI flows (publish-then-deploy model) — direct jar upload patterns differ from CH1.0.",
+          "Clustering on CH2.0 (replica clustering) enables primary-node-only-like semantics for some sources — but pollers/multi-replica concerns still need design attention."
+        ],
+        "hands_on": "Create a private space (or use shared space in trial): deploy the same app you ran on CH1.0 with 2 replicas, rolling updates. Configure a custom TLS context if you have a domain. Redeploy with a code change and verify zero dropped requests during the rolling update with a continuous curl loop.",
+        "deep_dive": "Choosing CH1.0 vs CH2.0 (while both exist): new projects → CH2.0 (strategic, container-native, simpler networking); constraints pushing CH1.0 → persistent VM queue dependence, legacy DLB integrations. Migration deltas: LB rules → ingress config, VPC peering → private space connections (transit gateway/VPN), internal ports concept replaced by space-internal visibility flags (public vs internal endpoints per app).\n\nResource model: fractional vCores with memory tiers; startup/liveness behavior container-style — apps must boot within probes' patience (heavy apps: tune).\n\nNode/AZ resilience automatic; multi-region still your design. Logs/metrics integrate with Anypoint Monitoring; log forwarding configurable at space level."
+      },
+      "quiz": [
+        {
+          "id": "RUN-002-q1",
+          "q": "Which CloudHub 1.0 feature does NOT carry into CloudHub 2.0?",
+          "options": [
+            "Object Store v2",
+            "Persistent VM queues",
+            "Multi-AZ distribution",
+            "Anypoint Monitoring integration"
+          ],
+          "answer": 1,
+          "explanation": "Durable async on CH2.0 = Anypoint MQ or external brokers; persistent VM queues were a CH1.0 worker feature."
+        },
+        {
+          "id": "RUN-002-q2",
+          "q": "In CH2.0, custom domains + TLS + private connectivity to on-prem are configured via:",
+          "options": [
+            "A Dedicated Load Balancer product",
+            "Private Space settings (ingress TLS, custom domains, VPN/transit-gateway connections)",
+            "Shared LB mapping rules",
+            "Route 53 only"
+          ],
+          "answer": 1,
+          "explanation": "The private space consolidates what VPC+DLB provided in CH1.0."
+        },
+        {
+          "id": "RUN-002-q3",
+          "q": "Zero-downtime deploys on CH2.0 use which strategy?",
+          "options": ["Recreate", "Rolling update (new replicas up before old drain)", "Blue/green DNS flips", "Stop-the-world"],
+          "answer": 1,
+          "explanation": "Rolling is the built-in zero-downtime path; recreate accepts downtime for resource-constrained cases."
+        }
+      ],
+      "difficulty": "advanced",
+      "prerequisites": ["RUN-001"],
+      "ai_tags": ["cloudhub2", "private-space", "replicas", "ingress", "rolling-deploy"]
+    },
+    {
+      "concept_id": "RUN-003",
+      "title": "Runtime Fabric & On-Prem: Owning the Runtime Plane",
+      "card": {
+        "what": "Runtime Fabric (RTF) runs Mule runtimes as containers on YOUR infrastructure (managed K8s: EKS/AKS/GKE, or the legacy appliance model) — control plane stays MuleSoft-hosted. Pure on-prem/standalone = you install Mule runtime on servers and manage everything, optionally clustered.",
+        "how": "RTF: install the RTF agent/operator into your K8s cluster, register with Runtime Manager, deploy apps as pods with replicas, resource requests/limits, inbound via your ingress controller. Standalone: unzip runtime, $MULE_HOME/apps hot-deploy, server registered to Runtime Manager via agent (or fully manual); cluster = 2+ runtimes sharing a distributed memory grid (Hazelcast) giving primary-node-only sources, shared VM queues, and HA failover.",
+        "exam_traps": [
+          "RTF vs CloudHub: RTF = your network/compliance, your K8s ops burden; CloudHub = MuleSoft-managed infra. 'Data cannot leave our datacenter' → RTF or on-prem, never CloudHub.",
+          "On-prem server CLUSTER (Hazelcast) gives primaryNodeOnly for pollers and shared VM queues — server GROUPS do not (just deployment targets). Cluster vs group is a precise exam distinction.",
+          "License/entitlement: RTF consumes vCore entitlements like CloudHub; standalone uses your own infra+license — cost questions hinge on this.",
+          "RTF apps need explicit resource sizing (CPU request/limit) — undersized requests throttle; this is K8s behavior exams now reference."
+        ],
+        "hands_on": "If no K8s handy: install standalone Mule runtime locally, deploy your app by dropping the jar into apps/, register the server in Runtime Manager with the agent, and deploy once more via RM to the same server. Bonus: two local runtimes as a cluster (config cluster ips) and observe primaryNodeOnly on a Scheduler.",
+        "deep_dive": "Decision matrix rows worth memorizing: data residency/compliance, network latency to backends, ops maturity (K8s skills?), elasticity needs, persistent-state features, cost model. CloudHub = fastest ops, least control; RTF = control + K8s skill requirement; standalone = maximum control, maximum toil.\n\nRTF specifics: inbound traffic via your LB/ingress; per-app replicas with anti-affinity; clustered Object Store is NOT OSv2 (on RTF, OS is app-local or external Redis-backed persistence gateway for CH-like persistence). Last-mile security (TLS between ingress and app) supported.\n\nHybrid reality: most enterprises run mixed planes under one control plane — environment/business-group strategy + consistent CI/CD across targets is the architecture answer."
+      },
+      "quiz": [
+        {
+          "id": "RUN-003-q1",
+          "q": "Regulation requires payloads never leave the corporate network, but the team wants Runtime Manager-driven deployments. Best target?",
+          "options": [
+            "CloudHub 2.0 private space",
+            "Runtime Fabric (or managed on-prem servers) — runtime plane inside your network, control plane manages it",
+            "CloudHub 1.0 VPC",
+            "Design Center"
+          ],
+          "answer": 1,
+          "explanation": "VPC/private space still run on MuleSoft-managed cloud infra. In-network runtime plane = RTF/on-prem."
+        },
+        {
+          "id": "RUN-003-q2",
+          "q": "Which capability REQUIRES a true on-prem cluster (not a server group)?",
+          "options": [
+            "Deploying one app to many servers at once",
+            "primaryNodeOnly polling + shared VM queues with failover",
+            "Runtime Manager registration",
+            "Log forwarding"
+          ],
+          "answer": 1,
+          "explanation": "Clusters share state (Hazelcast); groups are just a multi-deploy convenience."
+        },
+        {
+          "id": "RUN-003-q3",
+          "q": "On RTF, an app gets OOM-killed under load despite the worker-sized heap that worked on CloudHub. Likely RTF-specific cause?",
+          "options": [
+            "RTF has less memory overall",
+            "Container memory limits set too low relative to heap + off-heap needs (limits are explicit on RTF)",
+            "Hazelcast leak",
+            "Wrong Mule version"
+          ],
+          "answer": 1,
+          "explanation": "On K8s YOU set requests/limits; heap+metaspace+native must fit inside the container limit."
+        }
+      ],
+      "difficulty": "advanced",
+      "prerequisites": ["RUN-001"],
+      "ai_tags": ["runtime-fabric", "on-prem", "cluster", "kubernetes", "deployment-targets"]
+    },
+    {
+      "concept_id": "RUN-004",
+      "title": "Sizing, Scaling & Object Store",
+      "card": {
+        "what": "Capacity design: pick vCore/replica sizes and counts from throughput, latency, payload size, and concurrency math; scale horizontally for HA and load. Object Store v2 (OSv2) provides per-app key-value persistence (TTLs, cross-worker) used directly or behind Cache scope and Idempotent validators.",
+        "how": "Rough sizing: concurrent requests ≈ TPS × avg response time. CPU-bound transforms need vCores; IO-bound flows need concurrency headroom (non-blocking HTTP helps). Always ≥2 workers/replicas for HA in prod. OSv2: os:store/retrieve/contains/remove, TTL up to 30 days, eventual consistency cross-worker (~sub-second), rate-limited per app (~10 TPS sustained per worker guidance — design accordingly!). Cache scope wraps expensive calls keyed by expression; Idempotent Message Validator dedups on an id key.",
+        "exam_traps": [
+          "OSv2 is NOT a database: 10 TPS-ish per-app guidance, value size limits (10MB), eventual cross-worker visibility — high-frequency counters or large blobs are misuse; exams plant OSv2 where Redis/DB belongs.",
+          "Default OSv2 TTL/maxEntries: unset TTL persists up to 30 days max — 'forever' isn't an option.",
+          "Horizontal vs vertical: latency from CPU-heavy DW → bigger vCore (vertical); throughput of IO-bound APIs → more workers (horizontal). Choosing wrong axis is the classic sizing error.",
+          "Cache scope caches the MESSAGE result including payload consumption caveats (streams must be repeatable to cache)."
+        ],
+        "hands_on": "Wrap a slow (2s) external call in Cache scope keyed on the request id with a 60s TTL backed by OSv2 — demonstrate cache hits across two workers. Add an Idempotent Message Validator on orderId to a POST flow and prove duplicate submissions get rejected with MULE:DUPLICATE_MESSAGE.",
+        "deep_dive": "Worked sizing example to internalize: 200 TPS, p95 backend 150ms → ~30 concurrent in-flight; IO-bound on non-blocking HTTP → 2×1 vCore replicas handle it with headroom (HA included); the same TPS with 50ms of CPU-heavy DW per request → ~10 busy vCores → scale vertically/horizontally accordingly. Show the math in MCIA essays/scenarios.\n\nOSv2 internals: HTTP-based service adjacent to workers (that's why TPS-limited); os:retrieve with defaultValue avoids OS:KEY_NOT_FOUND handling; partitioning via multiple os:object-store configs.\n\nWatermarks, dedup, circuit-breaker counters, distributed locks (careful — advisory only) are the legit OSv2 use family. Anything chatty or large → Redis/DB. Streaming + sizing interplay: repeatable file-stored streams trade memory for disk — know maxInMemorySize knobs exist for big-payload tuning."
+      },
+      "quiz": [
+        {
+          "id": "RUN-004-q1",
+          "q": "An API needs request dedup on orderId across 3 workers with retries arriving within seconds. Suitable mechanism?",
+          "options": [
+            "In-memory HashSet",
+            "Idempotent Message Validator backed by Object Store v2",
+            "A vars-based flag",
+            "Sticky sessions"
+          ],
+          "answer": 1,
+          "explanation": "OSv2-backed idempotency is shared across workers and built for exactly this scale of dedup."
+        },
+        {
+          "id": "RUN-004-q2",
+          "q": "Which workload is a MISUSE of Object Store v2?",
+          "options": [
+            "Polling watermark timestamp",
+            "Per-request hit counters at 500 TPS",
+            "OAuth token cache with TTL",
+            "Idempotency keys for orders"
+          ],
+          "answer": 1,
+          "explanation": "OSv2 is rate-limited (~10 TPS guidance per app) — high-frequency counters need Redis/DB."
+        },
+        {
+          "id": "RUN-004-q3",
+          "q": "p95 latency degraded after marketing doubled traffic; CPU at 30%, threads waiting on backend IO. Right scaling move?",
+          "options": [
+            "Bigger vCores",
+            "More workers/replicas (horizontal) and/or raise concurrency limits — it's IO-bound",
+            "Increase heap",
+            "Move to RTF"
+          ],
+          "answer": 1,
+          "explanation": "IO-bound saturation scales horizontally; vertical CPU helps only CPU-bound work."
+        }
+      ],
+      "difficulty": "advanced",
+      "prerequisites": ["RUN-001", "RUN-002"],
+      "ai_tags": ["sizing", "scaling", "object-store", "cache", "idempotent-validator"]
+    }
+  ],
+  "side_quests": [
+    {
+      "quest_id": "RUN-SQ1",
+      "title": "The Plane Walker",
+      "description": "Deploy the SAME app to three targets: local standalone runtime, CloudHub (1.0 or 2.0), and — if you can — a local RTF-like K8s (or document the steps theoretically with real config snippets). Produce a comparison table: deployment artifact path, property injection, scaling, HA, log access. This table is MCIA gold.",
+      "xp": 200
+    },
+    {
+      "quest_id": "RUN-SQ2",
+      "title": "Sizing Court",
+      "description": "Write a one-page capacity plan for: 300 TPS peak, 80ms backend p95, 20KB payloads, 99.9% availability, monthly batch of 5M records. Choose plane, worker/replica size+count, OSv2 vs Redis decisions, and show the arithmetic. Defend it like a design review.",
+      "xp": 150
+    }
+  ],
+  "boss": {
+    "boss_id": "BOSS-09",
+    "title": "The Warden of Workers",
+    "intro": "The Warden has watched apps die of OOM, pollers stampede in triplicate, and 'temporary' 0.1 vCore workers serve Black Friday. Choose your runtime plane wisely — and size it with arithmetic, not vibes.",
+    "mcq": [
+      {
+        "id": "BOSS-09-q1",
+        "q": "Scheduler-driven sync runs on a 3-replica CH2.0 app WITHOUT clustering and triple-processes everything. Correct fixes ranked best-first?",
+        "options": [
+          "Reduce to 1 replica forever",
+          "Enable replica clustering (primary-poll semantics where supported) OR split poller (1 replica) from processors (N replicas) via a queue",
+          "Add random delays",
+          "Use OSv2 locks around the whole sync"
+        ],
+        "answer": 1,
+        "explanation": "Architectural separation (or clustering where the source supports it) beats hacks; single-replica-everything sacrifices HA of processing."
+      },
+      {
+        "id": "BOSS-09-q2",
+        "q": "Which trio correctly maps need → plane?",
+        "options": [
+          "Data residency → CloudHub; elasticity → on-prem; K8s skills → CH1.0",
+          "Data residency → RTF/on-prem; fastest time-to-value/managed ops → CloudHub 2.0; existing enterprise K8s + control → RTF",
+          "Everything → CH1.0",
+          "Compliance → shared LB"
+        ],
+        "answer": 1,
+        "explanation": "The decision matrix in one line. Be able to reproduce it under pressure."
+      },
+      {
+        "id": "BOSS-09-q3",
+        "q": "An app stores 5MB session blobs in OSv2 at 50 writes/sec. Two failure modes you predict?",
+        "options": [
+          "None — OSv2 scales infinitely",
+          "Throttling/latency from OSv2 rate limits and pressure from large values — redesign to external store (Redis/S3/DB) with OSv2 only for small control data",
+          "TLS errors",
+          "VPC exhaustion"
+        ],
+        "answer": 1,
+        "explanation": "Both the TPS guidance and value-size practicalities are violated — textbook OSv2 misuse."
+      },
+      {
+        "id": "BOSS-09-q4",
+        "q": "Rolling update on CH2.0 with 1 replica configured. What actually happens?",
+        "options": [
+          "Hard downtime always",
+          "Surge behavior can briefly run old+new during the roll (resource permitting), approximating zero downtime — but 2+ replicas is the reliable zero-downtime answer",
+          "Deployment rejected",
+          "Auto-scales to 2 permanently"
+        ],
+        "answer": 1,
+        "explanation": "Single-replica rolling is best-effort; production zero-downtime expectations require ≥2 replicas."
+      },
+      {
+        "id": "BOSS-09-q5",
+        "q": "On-prem cluster (2 nodes) runs a JMS listener flow. Node A dies mid-message (transactional consume). Expected behavior?",
+        "options": [
+          "Message lost",
+          "Transaction rolls back; the broker redelivers; node B continues consumption — HA via cluster + transactional redelivery",
+          "Node B replays node A's memory",
+          "The queue pauses for 24h"
+        ],
+        "answer": 1,
+        "explanation": "Cluster failover + broker redelivery semantics combine for continuity; idempotency still required for the duplicate window."
+      }
+    ],
+    "scenario": {
+      "prompt": "BUILD TASK — The Warden's Muster:\n\nProduce a deployment dossier + working proof for your order API suite:\n1. Capacity math: stated TPS/latency assumptions → chosen size/count for each of the 3 APIs (experience/process/system). Show arithmetic.\n2. Deploy at least one API with 2 workers/replicas; prove zero-downtime redeploy with a continuous request loop log.\n3. Shared state audit: every cross-instance state need (cache, dedup, watermark) mapped to OSv2 or external store with justification.\n4. Networking diagram: public vs internal endpoints, LB/ingress, where TLS terminates.\n5. Failure drill: kill one worker/replica during load; capture LB behavior and recovery timeline.",
+      "checklist": [
+        "Sizing arithmetic explicit and defensible (concurrency = TPS × RT shown)",
+        "Zero-downtime redeploy evidenced by uninterrupted request log",
+        "No in-memory state assumed shared anywhere (audit table complete)",
+        "Internal APIs provably unreachable from public internet",
+        "Worker-kill drill documented with recovery timing"
+      ]
+    }
+  }
+}

@@ -1,0 +1,337 @@
+{
+  "chapter": 11,
+  "title": "Architecture Oracle",
+  "concepts": [
+    {
+      "concept_id": "ARC-001",
+      "title": "API-Led Connectivity: The Three Layers",
+      "card": {
+        "what": "API-led connectivity organizes integration into Experience APIs (channel-specific shaping), Process APIs (orchestration/business logic, system-agnostic), and System APIs (unlock systems of record with canonical contracts). The goal: composable, reusable, independently evolving building blocks.",
+        "how": "System APIs hide backend complexity (one per system/domain object family), expose canonical models, own connection credentials. Process APIs compose system APIs into business capabilities (no channel concerns, no direct backend access). Experience APIs adapt process/system capabilities per channel (mobile, web, partner) — projection/aggregation, channel auth. Each layer independently deployed, governed, scaled, and discoverable in Exchange.",
+        "exam_traps": [
+          "Experience APIs should NOT contain business logic; Process APIs should NOT talk to backends directly; System APIs should NOT orchestrate across systems — layer-violation spotting is the question format.",
+          "Not every solution needs all three layers — a simple sync may justify two (or even one); 'always three layers' is dogma the exam punishes in 'simplest adequate design' questions.",
+          "Reuse is measured at the PROCESS/SYSTEM level (new channels reuse process APIs; new processes reuse system APIs) — reuse claims at experience level are suspect.",
+          "Layer ≠ network tier: layers are logical; all may deploy in the same VPC/space. Conflating logical layering with network topology is a planted error."
+        ],
+        "hands_on": "Decompose a real flow from your job into the three layers on paper: name each API (sys-sap-orders, prc-order-fulfillment, exp-mobile-orders), define each contract's resources, and mark exactly which layer owns: validation, mapping to canonical, orchestration, channel auth, backend credentials. Find one thing your current implementation puts in the wrong layer.",
+        "deep_dive": "Canonical data model pragmatism: full-enterprise CDM is a famous failure mode; bounded-context canonicals per domain (orders, customers) with explicit translation at process boundaries scales better — this nuance separates MCIA answers from textbook recitation.\n\nGranularity heuristics: system API per system-domain pair (not per table, not per giant ERP); process API per business capability; experience per channel-product. C4-style context diagrams + Exchange discoverability turn the architecture into an operating model.\n\nAnti-patterns catalog: point-to-point spaghetti rebuilt inside Mule, 'process' APIs that are pass-throughs (layer tax without value), experience APIs fanning out to 12 system APIs (orchestration leaked), shared mutable canonical libraries coupling all teams' release cadence."
+      },
+      "quiz": [
+        {
+          "id": "ARC-001-q1",
+          "q": "A mobile Experience API directly queries the Oracle ERP and applies discount rules. Layer violations present?",
+          "options": [
+            "None",
+            "Two: backend access belongs to a System API; business rules belong to a Process API",
+            "One: naming",
+            "Three: it also scales wrong"
+          ],
+          "answer": 1,
+          "explanation": "Channel layer doing system unlock + business logic collapses the architecture's reuse and change isolation."
+        },
+        {
+          "id": "ARC-001-q2",
+          "q": "The clearest evidence API-led reuse is WORKING in an org:",
+          "options": [
+            "Many experience APIs",
+            "New channels/processes ship by composing EXISTING process/system APIs (Exchange consumption metrics show multi-consumer assets)",
+            "A big canonical model document",
+            "All APIs use RAML"
+          ],
+          "answer": 1,
+          "explanation": "Reuse is consumption by new use cases — measurable in Exchange/API Manager, not in diagrams."
+        },
+        {
+          "id": "ARC-001-q3",
+          "q": "Simple requirement: nightly one-way sync, one source, one target, no other consumers foreseeable. Best architecture answer?",
+          "options": [
+            "Full three-layer build",
+            "A right-sized design — possibly a single app or system+process pair; layers added when reuse/consumers materialize",
+            "Six APIs for future-proofing",
+            "Reject the requirement"
+          ],
+          "answer": 1,
+          "explanation": "MCIA rewards fitness-for-purpose over ceremony. Architecture must justify its operating cost."
+        }
+      ],
+      "difficulty": "advanced",
+      "prerequisites": [],
+      "ai_tags": ["api-led", "layers", "canonical-model", "reuse", "granularity"]
+    },
+    {
+      "concept_id": "ARC-002",
+      "title": "Event-Driven Architecture & Messaging Topology",
+      "card": {
+        "what": "EDA inverts control: producers emit events (facts that happened); consumers react independently. Topologies: queues (work distribution), pub/sub (fan-out), event streams (ordered, replayable logs). Benefits: temporal decoupling, independent scaling, resilience. Costs: eventual consistency, observability complexity, duplicate handling.",
+        "how": "Event types: notification (thin — id+type, consumer fetches), event-carried state transfer (fat — full entity, consumer autonomy at the cost of staleness windows), domain events vs commands (events = past facts, many consumers; commands = directed intent, one handler). Choreography (services react to each other's events) vs orchestration (a process API/coordinator directs the saga) — hybrid is the practical norm.",
+        "exam_traps": [
+          "Events vs commands: 'OrderShipped' (event, immutable fact, 0..n consumers) vs 'ShipOrder' (command, one responsible handler). Misnaming reveals misdesign — exams test the distinction.",
+          "Eventual consistency is a FEATURE you accept, not a bug you fix with sync calls — adding synchronous read-after-write checks to 'fix' EDA defeats it.",
+          "Fat events trade autonomy for staleness/contract weight; thin events trade chattiness — neither is universally right; the question's constraints decide.",
+          "Choreography at scale becomes 'emergent spaghetti' — sagas with many steps and compensation favor orchestration; 2-3 step reactive chains favor choreography."
+        ],
+        "hands_on": "Redesign your Chapter 6 payment flow as EDA on paper + one working slice: OrderCreated event → exchange fan-out → inventory-reserver, notifier, analytics consumers (build two as Mule flows on Anypoint MQ). Decide and justify: thin vs fat event, and where a duplicate OrderCreated gets absorbed in each consumer.",
+        "deep_dive": "Consistency boundary design: aggregate writes are transactional; cross-aggregate effects are eventual via events — draw the boundary explicitly in designs. Outbox pattern (Ch5 boss) is the bridge from DB-transactional world to event world.\n\nDelivery guarantees stack: producer acks + broker durability + consumer idempotency = effective exactly-once business processing on at-least-once transport. Never claim transport-level exactly-once.\n\nSchema evolution for events: additive-only changes, versioned event types, consumer tolerance (ignore unknown fields) — registry-thinking even without a formal schema registry. Dead-letter + replay strategy per consumer class (replayable vs poison)."
+      },
+      "quiz": [
+        {
+          "id": "ARC-002-q1",
+          "q": "Five downstream systems must react when inventory changes; tomorrow there may be eight. Strongest argument for events over the current point-to-point REST calls?",
+          "options": [
+            "Events are faster per message",
+            "Producer decoupling: new consumers subscribe without producer changes; failures/slowness of one consumer don't cascade",
+            "REST cannot fan out",
+            "Events skip security"
+          ],
+          "answer": 1,
+          "explanation": "O(1) producer complexity as consumers grow + failure isolation = the core EDA value proposition."
+        },
+        {
+          "id": "ARC-002-q2",
+          "q": "'SendInvoiceEmail' published as an event consumed by 3 services causes triple emails. Root design flaw?",
+          "options": [
+            "Broker misconfiguration",
+            "It's a COMMAND (one intended handler) modeled as an event (many consumers) — intent vs fact confusion",
+            "Missing DLQ",
+            "Emails need FIFO"
+          ],
+          "answer": 1,
+          "explanation": "Directed intent belongs on a queue to one handler; facts belong on pub/sub."
+        },
+        {
+          "id": "ARC-002-q3",
+          "q": "An 8-step order saga with compensation (refund, release inventory, cancel shipment) is being built via pure choreography. MCIA-grade concern?",
+          "options": [
+            "Too few events",
+            "Process visibility/ownership: complex sagas with compensation favor an orchestrator owning state, retries, and the compensation sequence",
+            "Choreography can't compensate",
+            "Brokers don't support 8 steps"
+          ],
+          "answer": 1,
+          "explanation": "Beyond a few steps, emergent choreography hides the process; orchestration centralizes saga state and recovery."
+        }
+      ],
+      "difficulty": "advanced",
+      "prerequisites": ["ARC-001"],
+      "ai_tags": ["eda", "events", "choreography", "orchestration", "saga", "eventual-consistency"]
+    },
+    {
+      "concept_id": "ARC-003",
+      "title": "Kafka with Mule: Streams, Partitions & Consumer Groups",
+      "card": {
+        "what": "Apache Kafka is a distributed, partitioned, replicated commit log: topics split into partitions; ordering guaranteed per partition by key; consumer groups scale consumption (one partition → one consumer in a group); retention enables replay. The Kafka connector gives Mule publish/consume/seek/commit operations.",
+        "how": "Producer: key choice drives partition assignment (same key → same partition → ordered); acks=all + idempotent producer for durability. Consumer (Mule listener): group.id defines the scaling unit; offsets committed automatically or manually (commit after processing = at-least-once); seek to replay from an offset/timestamp. Mule specifics: ack modes on the listener (AUTO/MANUAL/DUPS_OK equivalents via commit config), and parallelism bounded by partition count.",
+        "exam_traps": [
+          "Ordering is PER PARTITION, not per topic — 'Kafka guarantees order' unqualified is false; key your messages (e.g., orderId) for entity-level ordering.",
+          "Consumers in a group ≤ partitions for full utilization; more consumers than partitions = idle consumers — scaling questions hinge on partition count.",
+          "Kafka vs Anypoint MQ selection: replay/stream history/very high throughput/ecosystem (Connect, Streams) → Kafka; simple managed cloud queueing/DLQ within Anypoint → MQ. Don't pick Kafka for a 10-msg/day B2B handoff.",
+          "Offset commit BEFORE processing = at-most-once (loss on crash); AFTER = at-least-once (duplicates on crash) — where the commit happens defines the guarantee."
+        ],
+        "hands_on": "Run Kafka locally (docker compose). Mule producer flow publishing orders keyed by customerId to a 3-partition topic; two Mule consumer apps in one group — observe partition assignment and per-key ordering. Kill one consumer mid-stream: watch rebalance and verify at-least-once redelivery with your manual-commit-after-processing config.",
+        "deep_dive": "Replay as an architectural capability: rebuild a read model, backfill a new consumer, reprocess after a bug fix — retention + seek make the log a source of truth ('turning the database inside out'). Compacted topics for latest-state-per-key (reference data distribution).\n\nDelivery semantics honesty: exactly-once exists WITHIN Kafka (transactions, EOS) but Mule consumers bridging to DBs/APIs are back to at-least-once + idempotency — say this precisely in design answers.\n\nThroughput design: partitions = max parallelism; size by target consumer throughput; beware hot keys (one giant customer = one hot partition). Schema evolution via registry (Avro/JSON-schema) with backward-compatible rules."
+      },
+      "quiz": [
+        {
+          "id": "ARC-003-q1",
+          "q": "Order events for the same orderId must process in sequence, but global throughput must scale. Kafka design?",
+          "options": [
+            "Single partition topic",
+            "Key by orderId on a multi-partition topic — per-key order preserved, partitions scale the rest",
+            "FIFO consumer group",
+            "Timestamps + reordering consumer"
+          ],
+          "answer": 1,
+          "explanation": "Partition-by-key is THE Kafka ordering answer: entity order without sacrificing parallelism."
+        },
+        {
+          "id": "ARC-003-q2",
+          "q": "Topic has 4 partitions; you deploy 6 consumers in one group. Result?",
+          "options": [
+            "All 6 share evenly",
+            "4 active, 2 idle — partition count caps group parallelism",
+            "Error at subscribe",
+            "Auto-repartitioning to 6"
+          ],
+          "answer": 1,
+          "explanation": "One partition serves at most one consumer per group. Scale partitions first."
+        },
+        {
+          "id": "ARC-003-q3",
+          "q": "A new analytics consumer must process the last 30 days of events that existing consumers already handled. Why is Kafka the right substrate?",
+          "options": [
+            "Kafka is faster",
+            "Retained log + independent consumer-group offsets allow replay from history without affecting other consumers",
+            "Analytics needs FIFO",
+            "It isn't — queues do this too"
+          ],
+          "answer": 1,
+          "explanation": "Replayable history per independent group is the log's superpower; consumed queue messages are gone."
+        }
+      ],
+      "difficulty": "advanced",
+      "prerequisites": ["ARC-002"],
+      "ai_tags": ["kafka", "partitions", "consumer-groups", "offsets", "replay", "ordering"]
+    },
+    {
+      "concept_id": "ARC-004",
+      "title": "Idempotency, DLQs & Resilience Patterns",
+      "card": {
+        "what": "The production-hardening toolkit: idempotency (safe duplicates), dead-letter queues (poison isolation + replay), circuit breakers (fail fast on sick dependencies), bulkheads (failure containment), timeouts/retries with backoff and jitter — composed deliberately per integration.",
+        "how": "Idempotency mechanics: natural keys (orderId) or client-supplied idempotency keys; enforcement via Idempotent Message Validator (OSv2), DB unique constraints (strongest), or upsert semantics. DLQ lifecycle: maxRedelivery → DLQ → alert → triage → fix → REPLAY (replay tooling/flow is part of the design, not an afterthought). Circuit breaker states closed→open→half-open; in Mule: Anypoint MQ connector's built-in breaker, or custom via OSv2 failure counters; timeout budget per hop < caller's budget.",
+        "exam_traps": [
+          "Retries WITHOUT idempotency manufacture duplicates; retries WITHOUT backoff+jitter manufacture thundering herds — answers must pair them.",
+          "DLQ without replay procedure/monitoring = a data graveyard; 'add a DLQ' alone is an incomplete answer in design questions.",
+          "DB unique constraint beats Object Store checks for correctness under concurrency (check-then-act races) — the validator is convenience, the constraint is the guarantee.",
+          "Timeout inversion: downstream timeout (30s) longer than your own SLA (10s) means callers give up while you keep burning resources — budgets must nest."
+        ],
+        "hands_on": "Harden one consumer flow completely: idempotency via DB unique constraint on eventId (catch the violation as success), maxRedelivery 3 → DLQ, DLQ monitor flow with alert log, a replay flow (DLQ → main queue with a replay-count header, max 2 replays), and a poor-man's circuit breaker: OSv2 failure counter opening (skip + 503) after 5 consecutive failures, half-open probe after 30s.",
+        "deep_dive": "Idempotency scope precision: dedup window (how long do keys live?) must exceed the maximum redelivery+retry horizon; TTL too short reintroduces duplicates 'mysteriously'. Response idempotency: replays should return the ORIGINAL result (store outcome keyed by idempotency key) for true API idempotency, not just side-effect suppression.\n\nBulkheads in Mule terms: per-dependency maxConcurrency/thread isolation, separate apps for noisy workloads, queue-per-consumer isolation. Backoff math: exponential base×2^n capped, ±jitter to decorrelate fleets.\n\nThe resilience review checklist (memorize): every remote call has timeout < caller budget; every retry is idempotent + backed off; every queue has DLQ + replay + alert; every dependency has a failure mode decision (fail fast / degrade / queue); every duplicate path has dedup with sized window. Run any design through it — including the ones in this game."
+      },
+      "quiz": [
+        {
+          "id": "ARC-004-q1",
+          "q": "Two replicas concurrently process duplicate OrderCreated events; both check OSv2 ('not seen') then both insert. Root cause + strongest fix?",
+          "options": [
+            "OSv2 latency; increase TTL",
+            "Check-then-act race; enforce with a DB unique constraint on eventId and treat violation as already-processed",
+            "Need FIFO queue",
+            "Slow down one replica"
+          ],
+          "answer": 1,
+          "explanation": "Non-atomic check+insert races under concurrency; the constraint makes the datastore the arbiter."
+        },
+        {
+          "id": "ARC-004-q2",
+          "q": "A dependency is down. Your flow retries 5x with 0ms delay per request at 100 TPS. What have you built?",
+          "options": [
+            "Resilience",
+            "A self-inflicted DDoS amplifier (500 TPS at a dying service) — needs backoff+jitter, circuit breaking, and a queue/degrade decision",
+            "At-least-once delivery",
+            "A bulkhead"
+          ],
+          "answer": 1,
+          "explanation": "Naive retries multiply load exactly when the dependency can least afford it."
+        },
+        {
+          "id": "ARC-004-q3",
+          "q": "Messages land in the DLQ nightly and nobody notices for a week. The missing design elements?",
+          "options": [
+            "Bigger DLQ",
+            "DLQ depth monitoring/alerting + an owned triage-and-replay runbook — DLQ is a workflow, not a bucket",
+            "Shorter TTL so they expire",
+            "maxRedelivery=∞ instead"
+          ],
+          "answer": 1,
+          "explanation": "Undetected dead letters are silent data loss with extra steps."
+        }
+      ],
+      "difficulty": "advanced",
+      "prerequisites": ["ARC-002"],
+      "ai_tags": ["idempotency", "dlq", "circuit-breaker", "retries", "resilience", "timeouts"]
+    }
+  ],
+  "side_quests": [
+    {
+      "quest_id": "ARC-SQ1",
+      "title": "The Architecture Defense",
+      "description": "Write a 2-page architecture decision record for a realistic scenario (e-commerce order platform, 5 backend systems, mobile+web+partner channels, 500 TPS peak): layer decomposition with named APIs, sync vs event decisions per interaction, broker choice with justification, resilience checklist applied. Then attack your own design: list the 3 weakest points an interviewer would probe.",
+      "xp": 200
+    },
+    {
+      "quest_id": "ARC-SQ2",
+      "title": "Replay Master",
+      "description": "Build the complete DLQ lifecycle working: poison generator, DLQ routing, depth-monitor alert flow, and a parameterized replay flow with replay-count cap and audit logging. Demo: poison 5 messages, alert fires, fix the 'bug', replay all 5 successfully.",
+      "xp": 150
+    }
+  ],
+  "boss": {
+    "boss_id": "BOSS-11",
+    "title": "The Oracle of Patterns",
+    "intro": "The Oracle does not ask what a pattern IS — it asks when the pattern is WRONG. Bring trade-offs, not textbook definitions.",
+    "mcq": [
+      {
+        "id": "BOSS-11-q1",
+        "q": "Inventory updates flow to an ERP that's down 4 hours monthly (planned). Online orders must never block. Architecture?",
+        "options": [
+          "Synchronous REST with 4h timeout",
+          "Accept orders → durable queue/event log → ERP consumer drains on recovery; order acceptance decoupled from ERP availability",
+          "Reject orders during maintenance",
+          "Cache the ERP"
+        ],
+        "answer": 1,
+        "explanation": "Temporal decoupling via durable messaging is purpose-built for availability mismatch."
+      },
+      {
+        "id": "BOSS-11-q2",
+        "q": "Which requirement set points to Kafka OVER Anypoint MQ?",
+        "options": [
+          "Simple task queue, 100 msgs/day, full Anypoint ops",
+          "100k events/sec telemetry, multiple consumer teams needing independent replay, stream processing downstream",
+          "B2B file handoff",
+          "Request-reply RPC"
+        ],
+        "answer": 1,
+        "explanation": "Throughput + multi-consumer replay + streaming ecosystem = the log. MQ wins the simple managed-queue cases."
+      },
+      {
+        "id": "BOSS-11-q3",
+        "q": "A process API calls 3 system APIs serially: 200ms+300ms+250ms against a 500ms SLA. Two valid levers (pick the answer containing ONLY valid ones)?",
+        "options": [
+          "Increase the SLA; add retries",
+          "Parallelize independent calls (Scatter-Gather) and/or cache slow-changing system data; re-examine whether all 3 are needed synchronously",
+          "Move everything to events; drop the SLA",
+          "Bigger workers fix latency"
+        ],
+        "answer": 1,
+        "explanation": "Latency engineering: parallelism, caching, and scope reduction. vCores don't fix serial network waits."
+      },
+      {
+        "id": "BOSS-11-q4",
+        "q": "An idempotency key store uses 24h TTL; the broker can redeliver up to 7 days after incident backlogs. Verdict?",
+        "options": [
+          "Fine — 24h is standard",
+          "Dedup window < redelivery horizon = duplicates WILL re-enter after day 1; size the window to the worst-case redelivery+replay horizon",
+          "TTLs don't matter",
+          "Switch to FIFO"
+        ],
+        "answer": 1,
+        "explanation": "The window must cover the full duplicate-arrival horizon, including ops replays."
+      },
+      {
+        "id": "BOSS-11-q5",
+        "q": "Half-open state in a circuit breaker exists to:",
+        "options": [
+          "Drop half the traffic permanently",
+          "Probe with limited trial requests after the open period to decide recovery vs re-opening",
+          "Log warnings only",
+          "Split traffic between two backends"
+        ],
+        "answer": 1,
+        "explanation": "Half-open is the controlled recovery test — without it the breaker either flaps or never recovers."
+      },
+      {
+        "id": "BOSS-11-q6",
+        "q": "The Oracle's final riddle: a team 'fixed' eventual consistency by making every event consumer synchronously call back the producer to confirm state. What have they built?",
+        "options": [
+          "Strong consistency",
+          "A distributed monolith: synchronous coupling re-introduced with extra hops, latency, and failure coupling — worse than either pure approach",
+          "CQRS",
+          "A saga"
+        ],
+        "answer": 1,
+        "explanation": "Bolting synchronous verification onto EDA discards its benefits while keeping its complexity. Choose a consistency model and design honestly for it."
+      }
+    ],
+    "scenario": {
+      "prompt": "BUILD TASK — The Oracle's Trial:\n\nDesign AND partially build an event-driven order platform slice:\n1. Written design (1 page): API-led decomposition + event topology (which interactions are sync REST, which are events, broker choice per link, with one-line justifications).\n2. Build: OrderCreated published to a fan-out (exchange or Kafka topic, keyed by orderId); two consumers — inventory (idempotent via DB constraint, DLQ + replay flow) and notifier (at-most-once acceptable, justify why).\n3. Resilience checklist applied in writing to every remote call in the slice (timeouts, retries, breaker decisions).\n4. Chaos: duplicate events injected, consumer killed mid-process, dependency dead for 2 minutes — document observed behavior vs designed behavior.",
+      "checklist": [
+        "Design doc maps every interaction to sync/async with defensible reasoning",
+        "Per-key ordering preserved where required and proven in logs",
+        "Inventory consumer survives duplicates (constraint-enforced) and poison (DLQ+replay works)",
+        "Every remote call has an explicit timeout and retry/breaker decision in the doc",
+        "Chaos results table: designed vs observed, with at least one honest discrepancy and its fix"
+      ]
+    }
+  }
+}

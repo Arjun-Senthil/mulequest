@@ -1,0 +1,305 @@
+{
+  "chapter": 6,
+  "title": "Error & Batch Warrior",
+  "concepts": [
+    {
+      "concept_id": "ERR-001",
+      "title": "Mule Error Taxonomy & Handler Semantics",
+      "card": {
+        "what": "Mule errors are typed (NAMESPACE:IDENTIFIER) in a hierarchy rooted at MULE:ANY. Handlers: on-error-propagate (handle, then re-raise to the caller/source as error) and on-error-continue (handle, then proceed as success). Matching is by type list and/or 'when' expression.",
+        "how": "Error types inherit: HTTP:NOT_FOUND extends MULE:CONNECTIVITY-ish branches; matching a parent matches children. A flow's error handler evaluates its on-error blocks top-down, first match wins. Unhandled errors hit the app's default error handler (configurable via defaultErrorHandler-ref). For HTTP-sourced flows: propagate → error response (500 default); continue → success response (200 default) with the handler's output payload.",
+        "exam_traps": [
+          "on-error-continue makes the SOURCE return SUCCESS — accidentally returning 200 for failures is the most-cited production bug and exam scenario.",
+          "Handler matching is first-match top-down: placing MULE:ANY first shadows everything below it.",
+          "Errors inside an error handler: the handler aborts and the new error propagates — handlers should be defensive (no risky calls without their own Try).",
+          "Try scope handlers only cover processors INSIDE the Try; the flow handler covers the rest. Nesting precedence: innermost matching handler wins."
+        ],
+        "hands_on": "Build a flow with three on-error blocks: HTTP:NOT_FOUND (continue → 404 JSON), HTTP:CONNECTIVITY or HTTP:TIMEOUT (propagate → 502), MULE:ANY (propagate → 500 generic). Prove ordering matters by moving MULE:ANY to the top and watching it swallow everything.",
+        "deep_dive": "error object anatomy: error.errorType (namespace, identifier, parentErrorType), error.description, error.detailedDescription, error.cause (Java throwable), error.errorMessage (a full Mule Message some connectors attach — e.g., the HTTP response body of a failed request lives in error.errorMessage.payload — hugely useful and under-known), error.childErrors (composite).\n\nCustom error types: raise-error type=\"APP:VALIDATION\" and error-mapping on operations (map HTTP:NOT_FOUND → APP:CUSTOMER_MISSING) build domain vocabularies — governance-friendly, testable. APIkit pre-wires APIKIT:* handlers to spec statuses.\n\nGlobal error handler via configuration defaultErrorHandler-ref standardizes the org's error contract (problem+json style bodies, correlationId echo). Design rule: continue only where the business outcome is genuinely OK; otherwise propagate and map at the edge."
+      },
+      "quiz": [
+        {
+          "id": "ERR-001-q1",
+          "q": "A flow's handler has on-error-continue for MULE:ANY. A DB write fails mid-flow. The HTTP caller receives:",
+          "options": ["500 with error body", "200 with whatever the handler produced", "504", "The original payload"],
+          "answer": 1,
+          "explanation": "continue = success to the source. This is how silent data loss gets a 200."
+        },
+        {
+          "id": "ERR-001-q2",
+          "q": "Where is the response body of a FAILED HTTP Request (e.g., the 400 error JSON from downstream) accessible?",
+          "options": ["payload", "error.errorMessage.payload", "error.description", "attributes.body"],
+          "answer": 1,
+          "explanation": "The connector attaches the error response as a Message on error.errorMessage."
+        },
+        {
+          "id": "ERR-001-q3",
+          "q": "Try scope (on-error-continue for HTTP:TIMEOUT) wraps one call; the flow handler has on-error-propagate MULE:ANY. A timeout occurs inside the Try. Outcome?",
+          "options": [
+            "Flow handler fires, 500",
+            "Try handles it; flow continues after the Try as success",
+            "Both handlers fire",
+            "The error is unhandled"
+          ],
+          "answer": 1,
+          "explanation": "Innermost matching handler wins; the flow handler never sees it."
+        }
+      ],
+      "difficulty": "intermediate",
+      "prerequisites": [],
+      "ai_tags": ["error-handling", "error-types", "propagate-continue", "try-scope"]
+    },
+    {
+      "concept_id": "ERR-002",
+      "title": "Transactions, Redelivery & Poison Messages",
+      "card": {
+        "what": "Reliability triad: transactions (atomic do-or-rollback over transactional resources), source redelivery policies (cap re-attempts of the same message), and poison-message routing (DLQ) when redelivery exhausts.",
+        "how": "Try scope transactionalAction=ALWAYS_BEGIN opens a tx; transactional operations join per their transactionalAction. Error → rollback (propagate) or commit (continue — careful!). JMS/VM listeners with transactions re-deliver on rollback; maxRedeliveryCount on the source raises MULE:REDELIVERY_EXHAUSTED for the poison path. rollback-exception strategies are Mule 3 — Mule 4 uses handler semantics.",
+        "exam_traps": [
+          "on-error-continue inside a transaction COMMITS it (the error was 'handled') — if you needed rollback, propagate. Subtle and devastating; exam gold.",
+          "HTTP is NOT transactional — a Try around HTTP calls doesn't roll back the remote POST. Compensation logic is required for remote side effects.",
+          "REDELIVERY_EXHAUSTED is raised by the SOURCE redelivery policy and must be handled to route the poison message (e.g., publish to DLQ + ack); otherwise it loops or drops per broker config.",
+          "XA needed only when TWO+ transactional resources must commit atomically; one resource + idempotent consumer usually beats XA in exam 'best design' answers."
+        ],
+        "hands_on": "VM queue (transactional) → consumer Try(ALWAYS_BEGIN): DB insert + deliberate failure after. Verify rollback re-delivers; set maxRedeliveryCount=2; handle REDELIVERY_EXHAUSTED by writing the message to a poison store. Flip the handler to on-error-continue and observe the commit-despite-error behavior.",
+        "deep_dive": "Pattern decision tree: single resource → local tx. DB + queue atomicity → outbox pattern (insert business row + event row in one tx; relay publishes) or XA where infra allows. Remote API side effects → sagas/compensation (cancel/credit calls) + idempotency keys.\n\nRedelivery policy (source-level, e.g., HTTP listener too) vs Until Successful (operation-level) vs reconnection strategy (connection-level): three different retry layers — name the right layer in scenarios.\n\nIn-flight visibility: transactions hold connections/locks — long transactions throttle pools; keep tx scope minimal (no HTTP calls inside DB transactions). Batch jobs and Parallel scopes can't join the surrounding tx."
+      },
+      "quiz": [
+        {
+          "id": "ERR-002-q1",
+          "q": "Inside Try(ALWAYS_BEGIN) a DB insert succeeds, then validation fails; the error is caught by on-error-continue inside the Try. The insert is:",
+          "options": ["Rolled back", "Committed", "Pending until flow end", "Retried"],
+          "answer": 1,
+          "explanation": "continue marks the tx successful → commit. Use propagate for rollback semantics."
+        },
+        {
+          "id": "ERR-002-q2",
+          "q": "Which scenario genuinely requires XA?",
+          "options": [
+            "DB insert + file write atomically",
+            "JMS consume + DB write where BOTH must commit/rollback together and neither idempotency nor outbox is acceptable",
+            "Two REST calls",
+            "DB write + Object Store write"
+          ],
+          "answer": 1,
+          "explanation": "XA = multiple XA-capable resources, one atomic outcome. Files/HTTP aren't XA resources; alternatives (outbox/idempotency) are usually preferred."
+        },
+        {
+          "id": "ERR-002-q3",
+          "q": "A transactional VM consumer keeps crash-looping on one malformed message. Correct design addition?",
+          "options": [
+            "Bigger maxConcurrency",
+            "Source redelivery policy with maxRedeliveryCount + REDELIVERY_EXHAUSTED handler routing to a poison queue",
+            "on-error-continue around everything",
+            "Remove the transaction"
+          ],
+          "answer": 1,
+          "explanation": "Cap redelivery and divert the poison message; the queue keeps flowing."
+        }
+      ],
+      "difficulty": "advanced",
+      "prerequisites": ["ERR-001"],
+      "ai_tags": ["transactions", "redelivery", "poison-message", "outbox", "xa"]
+    },
+    {
+      "concept_id": "ERR-003",
+      "title": "Batch Jobs: Phases, Steps & Aggregators",
+      "card": {
+        "what": "The Batch Job scope processes large datasets as individual records with persistent queues, parallelism, per-record error tolerance, and an On Complete summary — Mule's ETL workhorse.",
+        "how": "Load & Dispatch (implicit): input payload split into records persisted to batch queues. Process: each record flows through Batch Steps (parallel, blockSize records per thread batch-default 100); steps filter records via acceptExpression/acceptPolicy (ALL, NO_FAILURES, ONLY_FAILURES). Batch Aggregator inside a step accumulates records (fixed size or streaming) for bulk targets. On Complete: receives a BatchJobResult (counts: totalRecords, successfulRecords, failedRecords) — NOT the records.",
+        "exam_traps": [
+          "On Complete's payload is the BatchJobResult statistics object — answers expecting transformed records there are wrong; results were already written by steps.",
+          "Record-level variables: vars set BEFORE the batch job are snapshot per record; vars set inside a step travel WITH that record across steps — different from normal flow vars. Heavily tested.",
+          "max-failed-records default is 0 — ONE failed record stops the job (moves to on-complete). Set -1 (unlimited) or N for tolerance. Counter-intuitive default = exam bait.",
+          "Batch is asynchronous: the flow that triggers it continues immediately; the original caller gets the pre-batch payload, not batch results."
+        ],
+        "hands_on": "Batch job over a 1,000-row CSV: Step 1 validates (failures recorded), Step 2 (acceptPolicy NO_FAILURES) enriches via API, Step 3 with an Aggregator (size 100) bulk-inserting to DB, ONLY_FAILURES step writing rejects. Set max-failed-records=-1. Log the BatchJobResult in On Complete and reconcile counts.",
+        "deep_dive": "blockSize tuning: records-per-thread-grab; small block sizes improve fairness for skewed processing, large reduce queue overhead. Scheduling strategy ORDERED_SQUENTIAL vs ROUND_ROBIN across job instances.\n\nAggregator semantics: fixed-size groups flush on size; streaming aggregator gets ALL records as one stream (single-group bulk). preserveMimeTypes when records lose type info. Inside aggregators, payload is the ARRAY of records.\n\nResilience: batch queues are persisted (survive restart on same worker with persistent queues on CloudHub); a redeploy clears them — operational caveat. Batch vs For Each vs streaming DW: batch when you need per-record error isolation, checkpointing, parallelism, and aggregated loads at scale; the others for simpler in-memory work. Job instance id via batchJobInstanceId for tracing."
+      },
+      "quiz": [
+        {
+          "id": "ERR-003-q1",
+          "q": "In On Complete, the payload is:",
+          "options": [
+            "Array of successful records",
+            "BatchJobResult with success/failure statistics",
+            "The original input payload",
+            "null"
+          ],
+          "answer": 1,
+          "explanation": "Statistics only. Record outputs happen in the steps."
+        },
+        {
+          "id": "ERR-003-q2",
+          "q": "With default max-failed-records, record #7 of 10,000 fails in Step 1. What happens?",
+          "options": [
+            "Remaining records process; 1 failure reported",
+            "The job stops processing further records (default tolerance is 0)",
+            "The record retries 3 times",
+            "Step 2 still gets record #7"
+          ],
+          "answer": 1,
+          "explanation": "Default 0 = stop on first failure. Set -1/N deliberately."
+        },
+        {
+          "id": "ERR-003-q3",
+          "q": "Bulk-inserting batch records 200 at a time into a DB happens via:",
+          "options": [
+            "blockSize=200",
+            "A Batch Aggregator with size 200 wrapping the bulk insert",
+            "For Each inside the step",
+            "max-failed-records=200"
+          ],
+          "answer": 1,
+          "explanation": "Aggregator groups records; inside it the payload is the array for the bulk op. blockSize is threading, not grouping."
+        }
+      ],
+      "difficulty": "advanced",
+      "prerequisites": ["ERR-002"],
+      "ai_tags": ["batch", "aggregator", "max-failed-records", "phases", "etl"]
+    },
+    {
+      "concept_id": "ERR-004",
+      "title": "Async Reliability: VM, Reconnection & Reliable Acquisition",
+      "card": {
+        "what": "Patterns that keep async processing safe: VM queues (in-memory or persistent, intra-app/inter-app-on-same-runtime), reconnection strategies on connectors, and the 'reliability pattern' — durable handoff between acquisition and processing.",
+        "how": "VM: publish/listener with queue type transient (fast, lost on crash) or persistent (disk-backed). Reconnection strategy on connection providers: reconnect (count+frequency) or reconnect-forever — governs CONNECTION recovery; blocking=false makes startup tolerate dead endpoints. Reliable acquisition: source receives → minimal validation → persist to durable channel (VM persistent/MQ/DB) → ack/respond; processor consumes with transactions/redelivery.",
+        "exam_traps": [
+          "Transient VM queues lose messages on crash/restart — any 'must not lose' requirement mandates persistent queues (or external broker). CloudHub persistent VM queues require the persistent queues feature... and on CloudHub VM persistent queues, ordering is not guaranteed.",
+          "VM queues do NOT cross apps on CloudHub (worker-local) — inter-app messaging needs Anypoint MQ/JMS. On-prem same-runtime apps in a domain CAN share VM.",
+          "Reconnection strategies apply to establishing connections, not failed operations — a 500 response doesn't trigger reconnection.",
+          "A flow doing heavy work BEFORE persisting the message can lose it on crash — the reliability pattern's whole point is persist-first."
+        ],
+        "hands_on": "Implement reliable acquisition: HTTP POST → validate → VM persistent publish → 202. Consumer flow with transaction + redelivery → simulated flaky processor (fails 30% randomly) → DB. Restart the app mid-load and reconcile counts: zero loss. Repeat with transient queue and document the loss.",
+        "deep_dive": "Choosing the channel: VM persistent = single-app, simple, worker-local; Anypoint MQ = cross-app/cross-region cloud; JMS = enterprise broker features; DB table-as-queue = when ops insists (polling cost). The acquisition flow should be tiny: accept, validate cheaply, persist, acknowledge — every millisecond there is availability risk.\n\nGraceful shutdown: in-flight events get a drain window on redeploy; long-running syncs should checkpoint. Combined with maxConcurrency and back-pressure, this defines your loss/duplicate envelope — be able to STATE the envelope (at-least-once with dup window X) for any design; that articulation is what MCIA grades."
+      },
+      "quiz": [
+        {
+          "id": "ERR-004-q1",
+          "q": "Orders must survive an app crash between HTTP acceptance and DB write. Which design is correct?",
+          "options": [
+            "Async scope after the listener",
+            "Persist to a durable queue (VM persistent / Anypoint MQ) BEFORE responding 202; consume transactionally",
+            "Transient VM queue with high priority",
+            "Bigger heap"
+          ],
+          "answer": 1,
+          "explanation": "Durable handoff before acknowledgment = reliable acquisition. Async/transient lose on crash."
+        },
+        {
+          "id": "ERR-004-q2",
+          "q": "App A and App B on separate CloudHub workers need to exchange messages. VM queues?",
+          "options": [
+            "Yes — VM is runtime-global",
+            "No — VM is app/worker-local on CloudHub; use Anypoint MQ or JMS",
+            "Yes if persistent",
+            "Only with a shared domain"
+          ],
+          "answer": 1,
+          "explanation": "Cross-app messaging on CloudHub needs a real broker. Domains (shared VM) are on-prem standalone constructs."
+        },
+        {
+          "id": "ERR-004-q3",
+          "q": "A connector's reconnect-forever strategy will:",
+          "options": [
+            "Retry failed operations forever",
+            "Keep attempting to re-establish a broken CONNECTION indefinitely",
+            "Retry HTTP 5xx responses",
+            "Restart the flow"
+          ],
+          "answer": 1,
+          "explanation": "Connection-layer recovery only. Operation retries are Until Successful/redelivery territory."
+        }
+      ],
+      "difficulty": "advanced",
+      "prerequisites": ["ERR-002"],
+      "ai_tags": ["vm-queues", "reliability-pattern", "reconnection", "durability"]
+    }
+  ],
+  "side_quests": [
+    {
+      "quest_id": "ERR-SQ1",
+      "title": "The Unbreakable Pipeline",
+      "description": "Combine everything: SFTP CSV pickup → batch job (validate, enrich, aggregate bulk-insert, rejects step) → On Complete publishes a summary event to a queue → notifier flow. Then sabotage it: malformed rows, dead enrichment API, DB outage mid-batch, app restart. Document recovery behavior for each failure in a RUNBOOK.md.",
+      "xp": 200
+    },
+    {
+      "quest_id": "ERR-SQ2",
+      "title": "Error Contract Architect",
+      "description": "Design and implement a global error handler producing RFC-7807 problem+json (type, title, status, detail, correlationId) for: validation errors (400), not found (404), downstream timeout (504), downstream 5xx (502), unknown (500). Wire via defaultErrorHandler-ref and prove every path with curl.",
+      "xp": 150
+    }
+  ],
+  "boss": {
+    "boss_id": "BOSS-06",
+    "title": "The Chaos Knight",
+    "intro": "The Chaos Knight doesn't attack your happy path — he attacks everything else. Crashes mid-transaction, poison messages, half-written batches. Survive his onslaught.",
+    "mcq": [
+      {
+        "id": "BOSS-06-q1",
+        "q": "An HTTP-sourced flow: Try(tx) { DB debit; JMS publish (joins tx); }; on-error-propagate. The JMS publish fails. Final state?",
+        "options": [
+          "Debit committed, no message",
+          "Both rolled back; caller gets the error response",
+          "Debit rolled back, message sent",
+          "Depends on ack mode"
+        ],
+        "answer": 1,
+        "explanation": "Both joined one tx; propagate after rollback surfaces the error. (Note: this needs XA if DB and JMS are different resource managers — recognizing THAT is the follow-up question.)"
+      },
+      {
+        "id": "BOSS-06-q2",
+        "q": "Batch job, max-failed-records=-1: 950/1000 succeed in Step 1. Step 2 has acceptPolicy ONLY_FAILURES. Who enters Step 2?",
+        "options": ["All 1000", "The 950 successes", "The 50 failures", "Nobody — failed records never continue"],
+        "answer": 2,
+        "explanation": "ONLY_FAILURES steps exist precisely to compensate/route failed records."
+      },
+      {
+        "id": "BOSS-06-q3",
+        "q": "Which combination delivers at-least-once processing with bounded poison handling for a queue consumer?",
+        "options": [
+          "AUTO ack + Try",
+          "MANUAL ack after success + maxRedelivery → DLQ + idempotent processing",
+          "on-error-continue + AUTO ack",
+          "Transient VM + retry"
+        ],
+        "answer": 1,
+        "explanation": "Ack-after-success (redelivery on failure), capped redeliveries to DLQ, idempotency to absorb duplicates — the complete triad."
+      },
+      {
+        "id": "BOSS-06-q4",
+        "q": "A batch step sets vars.enriched per record. In the NEXT step, vars.enriched is:",
+        "options": [
+          "Gone — steps are isolated",
+          "Present for that same record (record vars travel with the record)",
+          "Shared across all records",
+          "Available only in On Complete"
+        ],
+        "answer": 1,
+        "explanation": "Record-scoped variables persist per record across steps — batch's special variable semantics."
+      },
+      {
+        "id": "BOSS-06-q5",
+        "q": "Your 'reliable' intake responds 202 AFTER an Async scope containing the MQ publish. The Chaos Knight kills the worker right after a 202. Verdict?",
+        "options": [
+          "Safe — Async completed",
+          "Message may be lost: 202 was sent without confirmation of durable persistence. Publish must complete BEFORE the response",
+          "MQ redelivers",
+          "The client retries automatically"
+        ],
+        "answer": 1,
+        "explanation": "Acknowledge only after the durable write. Async detachment before persistence breaks the reliability contract."
+      }
+    ],
+    "scenario": {
+      "prompt": "BUILD TASK — Survive the Chaos:\n\nBuild 'payment-reconciler':\n1. HTTP POST /payments → validate → persistent queue → 202 {correlationId} (persist-first proven).\n2. Transactional consumer: DB insert (idempotent on paymentId) + status update; redelivery max 2 → poison flow writing to payments_poison table + alert log.\n3. Nightly batch job reconciling payments vs a settlement CSV: matched, mismatched (ONLY_FAILURES step), aggregated bulk status updates (size 100), On Complete summary event.\n4. Global RFC-7807 error contract on the API.\n5. Chaos drill: kill the app at 3 different points (pre-persist, mid-consume, mid-batch) and write down the exact behavior observed at each.",
+      "checklist": [
+        "202 only after durable persistence (kill-test passes with zero loss)",
+        "Consumer idempotent: forced redelivery leaves exactly one DB row",
+        "Poison path proven with a malformed payment",
+        "Batch reconciliation counts match input exactly (success+failed+rejected = total)",
+        "Chaos drill notes capture loss/duplicate envelope at all three kill points"
+      ]
+    }
+  }
+}

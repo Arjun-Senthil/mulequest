@@ -1,0 +1,300 @@
+{
+  "chapter": 3,
+  "title": "The Flow Master",
+  "concepts": [
+    {
+      "concept_id": "FLW-001",
+      "title": "Choice Router & Flow Control Basics",
+      "card": {
+        "what": "The Choice router is Mule's if/else-if/else: evaluates DataWeave conditions top-down and executes exactly ONE route — the first whose condition is true, else the default (otherwise) route.",
+        "how": "Each <when expression=\"#[...]\"> is evaluated in order against the event. Only the matching route's processors run; the event continues after the choice with that route's output. No fall-through, no multi-match. An empty/missing otherwise with no matching when raises no error — the event passes through unchanged in Mule 4 only if otherwise exists; without any match and no otherwise, the event continues unmodified.",
+        "exam_traps": [
+          "Choice executes EXACTLY one route — options claiming multiple matching routes execute are describing a different router (Mule 3's all/scatter-gather).",
+          "Condition order matters: a broader condition placed first shadows later ones. Exams show overlapping conditions and ask which route runs.",
+          "Choice conditions are full DataWeave — typos produce expression errors (MULE:EXPRESSION) at runtime, not deploy time.",
+          "Choice is for ROUTING, not parallelism. It never forks the event."
+        ],
+        "hands_on": "Build a /route endpoint: Choice on attributes.queryParams.tier — 'gold' route sets a premium payload, 'silver' standard, otherwise a default. Order conditions so that a deliberately overlapping condition ('tier != null' placed first) demonstrates shadowing; then fix the order.",
+        "deep_dive": "Under the hood each route is a processor chain; variables set inside the executed route persist after the choice. Errors inside a route propagate normally to the flow's error handler.\n\nDesign judgment: more than ~3-4 branches or branching on message TYPE usually signals you should split flows or use APIkit routing instead — keep transformation/branching declarative. For content-based routing across transports, prefer explicit flows per consumer over mega-choice blocks (maintainability, MCIA design questions)."
+      },
+      "quiz": [
+        {
+          "id": "FLW-001-q1",
+          "q": "Two when conditions both evaluate true for an event. Choice behavior?",
+          "options": [
+            "Both routes execute in order",
+            "Only the FIRST true route executes",
+            "Runtime error: ambiguous routing",
+            "The otherwise route executes as a tiebreaker"
+          ],
+          "answer": 1,
+          "explanation": "First-match-wins, top-down. Order is part of your logic."
+        },
+        {
+          "id": "FLW-001-q2",
+          "q": "A variable set inside the executed Choice route is, after the Choice:",
+          "options": ["Discarded", "Available to subsequent processors", "Available only in error handlers", "Renamed with a route prefix"],
+          "answer": 1,
+          "explanation": "Routes are inline processor chains in the same event context."
+        },
+        {
+          "id": "FLW-001-q3",
+          "q": "Which is the WRONG tool for executing two independent enrichment calls concurrently?",
+          "options": ["Scatter-Gather", "Async + VM", "Choice router", "Parallel For Each"],
+          "answer": 2,
+          "explanation": "Choice picks one path. It never parallelizes."
+        }
+      ],
+      "difficulty": "beginner",
+      "prerequisites": [],
+      "ai_tags": ["choice", "routing", "conditions"]
+    },
+    {
+      "concept_id": "FLW-002",
+      "title": "Scatter-Gather: Parallel Aggregation",
+      "card": {
+        "what": "Scatter-Gather sends a COPY of the current event to every route concurrently, waits for all to finish, and aggregates results into a single object keyed '0','1','2'... where each entry is the route's full Message (payload + attributes).",
+        "how": "All routes run in parallel on separate threads; the aggregate result payload is a Map<route-index, Message>. Access route payloads as payload.'0'.payload in DW. If ANY route fails, by default a MULE:COMPOSITE_ROUTING error is raised containing per-route results/errors. Each route gets its own copy of variables — variable changes inside routes DO propagate back (merged), with last-writer semantics for conflicts.",
+        "exam_traps": [
+          "The aggregated payload entries are MESSAGES, not raw payloads — payload.'0' is a Message; you need payload.'0'.payload. The #1 Scatter-Gather exam trap.",
+          "Scatter-Gather requires at least two routes — single-route configs are invalid.",
+          "One failing route fails the whole scope with COMPOSITE_ROUTING (collect-all behavior needs Try scopes inside routes).",
+          "Routes receive COPIES of the event — modifying the payload in route A does not affect route B."
+        ],
+        "hands_on": "Build a /profile endpoint that scatter-gathers three HTTP requests (e.g., three public API endpoints). Aggregate with a Transform producing {a: payload.'0'.payload, b: payload.'1'.payload, c: payload.'2'.payload}. Then kill one endpoint and inspect the COMPOSITE_ROUTING error structure (error.errorMessage.payload.failures). Wrap each route in a Try with on-error-continue and rebuild a partial-success response.",
+        "deep_dive": "Timeout: a scope-level timeout applies to the whole gather; per-route resilience belongs inside the routes (Try + timeout on connectors). Threading: routes execute on the UBER pool; heavy blocking routes can starve concurrency — set sensible HTTP timeouts.\n\nPartial-failure pattern (production-grade): Try in each route, on-error-continue producing {status:'failed', error: error.description}, aggregate, then decide overall status in one Transform. This pattern is the canonical answer to 'aggregate available data even if one backend is down'.\n\nDo not use Scatter-Gather for ordered processing or when route B needs route A's output — that's sequential design."
+      },
+      "quiz": [
+        {
+          "id": "FLW-002-q1",
+          "q": "After a 2-route Scatter-Gather, which DW expression yields route 0's JSON body?",
+          "options": ["payload[0]", "payload.'0'", "payload.'0'.payload", "payload.route0.body"],
+          "answer": 2,
+          "explanation": "Aggregation maps route index → Message. The body is .payload of that Message."
+        },
+        {
+          "id": "FLW-002-q2",
+          "q": "Route 2 of 3 throws HTTP:TIMEOUT. Default Scatter-Gather outcome?",
+          "options": [
+            "Routes 1 and 3 results are returned; route 2 omitted",
+            "MULE:COMPOSITE_ROUTING error carrying per-route outcomes",
+            "The scope retries route 2",
+            "The first error is swallowed"
+          ],
+          "answer": 1,
+          "explanation": "All-or-error by default. Partial tolerance requires Try scopes inside routes."
+        },
+        {
+          "id": "FLW-002-q3",
+          "q": "You need responses from 3 systems where system B's request DEPENDS on system A's response. Correct design?",
+          "options": [
+            "Scatter-Gather with 3 routes",
+            "Sequential calls (A then B), optionally Scatter-Gather for the independent C",
+            "Parallel For Each over [A,B,C]",
+            "Async scope per call"
+          ],
+          "answer": 1,
+          "explanation": "Dependencies serialize. Parallelize only the independent portion."
+        }
+      ],
+      "difficulty": "intermediate",
+      "prerequisites": ["FLW-001"],
+      "ai_tags": ["scatter-gather", "parallelism", "aggregation", "composite-routing"]
+    },
+    {
+      "concept_id": "FLW-003",
+      "title": "First Successful, Round Robin & Until Successful",
+      "card": {
+        "what": "Three resilience/distribution routers: First Successful tries routes in order until one succeeds; Round Robin distributes successive events across routes one each; Until Successful retries its inner processors until success or max retries.",
+        "how": "First Successful: route 1 fails → route 2 attempted → ... → if all fail, error raised. Round Robin: event N goes to route (N mod routes) — load distribution, stateful per runtime instance. Until Successful: wraps processors with maxRetries and millisBetweenRetries; failures inside are retried; exhausting retries raises MULE:RETRY_EXHAUSTED with the last error as cause.",
+        "exam_traps": [
+          "Until Successful raises RETRY_EXHAUSTED, and the ORIGINAL error is the cause — handlers matching on the original type (e.g., HTTP:CONNECTIVITY) won't match RETRY_EXHAUSTED directly. Test on error.cause or map both.",
+          "First Successful 'success' = route completes without error — a 500-returning HTTP call with default status validator IS an error, but a 404 with a custom validator accepting 404 is a SUCCESS and stops the failover. Validator config changes semantics.",
+          "Round Robin is per-runtime-instance state: across multiple CloudHub workers, distribution is per worker, not global.",
+          "Until Successful retries are SYNCHRONOUS (blocking the event) in Mule 4 — unlike Mule 3's async default."
+        ],
+        "hands_on": "Wrap an HTTP Request to a flaky endpoint (point at a dead port first) in Until Successful (3 retries, 2000ms). Watch logs show retries, then catch MULE:RETRY_EXHAUSTED and inspect error.cause. Then build First Successful with primary=dead endpoint, secondary=live endpoint, and verify silent failover.",
+        "deep_dive": "Choosing the right one: transient network blips → Until Successful around the call (idempotent operations only — retrying a non-idempotent POST duplicates!). Active/passive endpoint failover → First Successful. Crude load spreading without an LB → Round Robin (rare in practice; prefer real load balancers).\n\nRetry design at MCIA level: exponential backoff isn't built into Until Successful (fixed interval) — for backoff use connector-level reconnection strategies (reconnect-forever/reconnect with frequency) or redelivery policies on sources. Distinguish: reconnection strategy = connection establishment; Until Successful = operation-level retry; redelivery policy = source-side poison message control."
+      },
+      "quiz": [
+        {
+          "id": "FLW-003-q1",
+          "q": "Until Successful exhausts retries around an HTTP call that kept timing out. Which error type must your handler match?",
+          "options": ["HTTP:TIMEOUT", "MULE:RETRY_EXHAUSTED", "MULE:COMPOSITE_ROUTING", "HTTP:CONNECTIVITY"],
+          "answer": 1,
+          "explanation": "The scope wraps the final failure in RETRY_EXHAUSTED; the original timeout is the cause."
+        },
+        {
+          "id": "FLW-003-q2",
+          "q": "Why is Until Successful around a payment POST dangerous?",
+          "options": [
+            "It blocks the flow",
+            "Retries of a non-idempotent operation can duplicate the payment",
+            "It only works with HTTP GET",
+            "It disables error handlers"
+          ],
+          "answer": 1,
+          "explanation": "Retry safety requires idempotency — the classic integration-design exam point."
+        },
+        {
+          "id": "FLW-003-q3",
+          "q": "Primary and backup providers for the same lookup; call backup only when primary errors. Best construct?",
+          "options": ["Round Robin", "First Successful", "Scatter-Gather", "Choice on a health flag"],
+          "answer": 1,
+          "explanation": "Ordered failover is exactly First Successful's contract."
+        }
+      ],
+      "difficulty": "intermediate",
+      "prerequisites": ["FLW-002"],
+      "ai_tags": ["until-successful", "first-successful", "retry", "failover", "idempotency"]
+    },
+    {
+      "concept_id": "FLW-004",
+      "title": "For Each, Parallel For Each & Async",
+      "card": {
+        "what": "For Each iterates a collection sequentially, processing each element as the payload; Parallel For Each does it concurrently and aggregates results into a list; Async detaches a branch to run fire-and-forget on a separate thread.",
+        "how": "For Each: splits via collection expression (default #[payload]), each iteration's payload is one element; AFTER the scope, the ORIGINAL collection payload is restored (modifications to iteration payloads are discarded — use vars to accumulate). Parallel For Each: returns a NEW payload — the list of each iteration's result; maxConcurrency controls fan-out. Async: caller continues immediately; errors inside are handled inside (never reach the caller); variables are copied in, changes don't propagate out.",
+        "exam_traps": [
+          "For Each does NOT change the flow's payload after completion — the pre-scope collection returns. Accumulate into a variable. Parallel For Each DOES return aggregated results. This contrast is a guaranteed exam item.",
+          "Errors in any Parallel For Each iteration produce COMPOSITE_ROUTING (like Scatter-Gather) after all iterations attempt.",
+          "Async scope errors do NOT propagate to the caller flow — they're logged/handled within. An answer expecting the caller's handler to catch async errors is wrong.",
+          "For Each within a transaction: iterations join the transaction; Parallel For Each cannot run inside a transaction (parallelism breaks tx affinity)."
+        ],
+        "hands_on": "Given a JSON array of 5 ids: (1) For Each calling an API per id, accumulating responses into vars.results via a Transform inside the scope — confirm the post-scope payload reverted to the original array. (2) Swap to Parallel For Each with maxConcurrency=3, return the aggregated list directly. Time both against a slow endpoint and record the speedup.",
+        "deep_dive": "Batch vs For Each: For Each is in-memory, single-event scope iteration; Batch Job is the record-streaming, persistent-queue engine for large datasets (Chapter 6). Choosing For Each for a million records is a design error — memory and no checkpointing.\n\nAsync + VM publish for true fire-and-forget with durability: Async alone dies with the runtime; a VM queue (or Anypoint MQ) adds buffering/persistence. Response-time-sensitive APIs offload notification/audit work via Async — but anything business-critical needs a durable queue, not Async. This distinction (thread detach vs durable async) is core MCIA material."
+      },
+      "quiz": [
+        {
+          "id": "FLW-004-q1",
+          "q": "After a For Each over payload (an array), what is the flow's payload?",
+          "options": [
+            "The last iteration's payload",
+            "The original array, unchanged",
+            "A list of iteration results",
+            "null"
+          ],
+          "answer": 1,
+          "explanation": "For Each restores the original payload; results must be accumulated in vars. Parallel For Each is the one that aggregates."
+        },
+        {
+          "id": "FLW-004-q2",
+          "q": "An error thrown inside an Async scope:",
+          "options": [
+            "Propagates to the calling flow's error handler",
+            "Is handled within the async branch only; the caller is unaffected",
+            "Rolls back the caller's transaction",
+            "Stops the flow's source"
+          ],
+          "answer": 1,
+          "explanation": "Detached means detached — including error propagation."
+        },
+        {
+          "id": "FLW-004-q3",
+          "q": "API must respond in <200ms but also write an audit record that MUST NOT be lost even on crash. Correct design?",
+          "options": [
+            "Async scope with the audit write",
+            "Publish audit event to a durable queue (VM persistent/Anypoint MQ) and respond; a consumer flow writes it",
+            "Until Successful around the audit write inline",
+            "Write audit first, then respond"
+          ],
+          "answer": 1,
+          "explanation": "Async scope loses work on crash. Durability requires a persistent queue between accept and process."
+        }
+      ],
+      "difficulty": "intermediate",
+      "prerequisites": ["FLW-002"],
+      "ai_tags": ["foreach", "parallel-foreach", "async", "fire-and-forget", "durability"]
+    }
+  ],
+  "side_quests": [
+    {
+      "quest_id": "FLW-SQ1",
+      "title": "The Resilient Aggregator",
+      "description": "Production pattern build: /dashboard endpoint scatter-gathering 3 backends, each route wrapped in Try with on-error-continue producing {status:'degraded'} entries, a final Transform computing overall health, correct HTTP status (200 full / 207 partial), and an Until Successful (3x) inside only the IDEMPOTENT route. Load test with one backend down.",
+      "xp": 200
+    },
+    {
+      "quest_id": "FLW-SQ2",
+      "title": "Sequential vs Parallel Showdown",
+      "description": "Take a 20-element array and an endpoint with 500ms latency. Measure total time: For Each, Parallel For Each (maxConcurrency 5, 10, 20). Produce a small table of results and a 3-sentence rule of thumb for choosing maxConcurrency against a rate-limited backend.",
+      "xp": 100
+    }
+  ],
+  "boss": {
+    "boss_id": "BOSS-03",
+    "title": "The Router King",
+    "intro": "The Router King has watched a thousand developers parallelize what should be serial and serialize what should be parallel. Show him you know the difference — and what happens when routes fail.",
+    "mcq": [
+      {
+        "id": "BOSS-03-q1",
+        "q": "A Scatter-Gather aggregates 3 routes. Route payloads were JSON objects. Which Transform yields a merged object of all three bodies?",
+        "options": [
+          "payload.'0' ++ payload.'1' ++ payload.'2'",
+          "payload.'0'.payload ++ payload.'1'.payload ++ payload.'2'.payload",
+          "flatten(payload)",
+          "payload reduce ($$ ++ $)"
+        ],
+        "answer": 1,
+        "explanation": "Entries are Messages — reach into .payload of each before merging."
+      },
+      {
+        "id": "BOSS-03-q2",
+        "q": "Order processing: validate → reserve inventory → charge card → confirm. Charge fails transiently sometimes; charging twice is catastrophic. Which retry placement is correct?",
+        "options": [
+          "Until Successful around the whole flow",
+          "Until Successful around the charge call only",
+          "No automatic retry on the charge unless the payment API is idempotent (idempotency key); otherwise design for exactly-once via keys, then retry safely",
+          "First Successful with two charge attempts"
+        ],
+        "answer": 2,
+        "explanation": "Retrying non-idempotent payments without an idempotency mechanism duplicates charges. Fix idempotency first; only then is retry safe."
+      },
+      {
+        "id": "BOSS-03-q3",
+        "q": "Parallel For Each over 10 items: 2 iterations fail. What does the scope produce?",
+        "options": [
+          "8 results, 2 nulls",
+          "MULE:COMPOSITE_ROUTING after all iterations complete, containing successes and failures",
+          "Stops at the first failure",
+          "RETRY_EXHAUSTED"
+        ],
+        "answer": 1,
+        "explanation": "Like Scatter-Gather, it completes all branches then raises the composite error."
+      },
+      {
+        "id": "BOSS-03-q4",
+        "q": "Which statement about Async is TRUE?",
+        "options": [
+          "The caller waits for async completion at flow end",
+          "Errors inside async propagate to the caller",
+          "Variables modified inside async are NOT reflected in the caller",
+          "Async guarantees execution even after a runtime crash"
+        ],
+        "answer": 2,
+        "explanation": "Async copies context in; nothing comes back — not results, not errors, not var changes. And it's not durable."
+      },
+      {
+        "id": "BOSS-03-q5",
+        "q": "First Successful route 1 calls an API whose response validator treats 404 as success. The API returns 404. What happens?",
+        "options": [
+          "Failover to route 2",
+          "First Successful completes with route 1's 404 response — no failover",
+          "COMPOSITE_ROUTING error",
+          "RETRY_EXHAUSTED"
+        ],
+        "answer": 1,
+        "explanation": "Success is 'no error raised'. Validator config defines what counts as an error — semantics, not status codes, drive failover."
+      }
+    ],
+    "scenario": {
+      "prompt": "BUILD TASK — The Router King's Court:\n\nBuild /quote: given {customerId, items[]}:\n1. Scatter-Gather: (a) credit check API, (b) Parallel For Each over items[] calling a pricing API per item (maxConcurrency 4), (c) loyalty API wrapped in Try→on-error-continue defaulting to tier 'NONE'.\n2. Aggregate into {credit, prices[], tier, quotedAt}.\n3. Until Successful (3x, 1s) ONLY around the credit check (it's idempotent).\n4. Async scope publishing the quote to a VM queue consumed by an audit flow.\n5. Demonstrate: loyalty API down → 200 with tier NONE; credit API down after retries → meaningful 502 from the flow error handler.",
+      "checklist": [
+        "Scatter-Gather aggregation correctly unwraps route Messages",
+        "Parallel For Each returns the aggregated price list as payload",
+        "Loyalty failure degrades gracefully without failing the quote",
+        "RETRY_EXHAUSTED on credit check mapped to a clean 502 response",
+        "Audit record visible from the VM consumer flow log after response already returned"
+      ]
+    }
+  }
+}

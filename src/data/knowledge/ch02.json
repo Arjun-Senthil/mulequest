@@ -1,0 +1,300 @@
+{
+  "chapter": 2,
+  "title": "API Architect's Path",
+  "concepts": [
+    {
+      "concept_id": "API-001",
+      "title": "API-First with RAML 1.0",
+      "card": {
+        "what": "RAML 1.0 is a YAML-based modeling language for REST APIs: resources, methods, types, traits, resourceTypes, examples, and modular includes. In MuleSoft's API-first workflow the spec is the contract designed BEFORE implementation, published to Exchange, and scaffolded into flows by APIkit.",
+        "how": "Root section declares title, version, baseUri, mediaType, types. Resources nest (/customers/{customerId}). DataTypes define schemas with built-in types, properties, required/optional (?), inheritance. traits add reusable method-level behavior (e.g., pageable, secured); resourceTypes templatize whole resources. !include pulls in external files; libraries (uses:) namespace reusable fragments published to Exchange.",
+        "exam_traps": [
+          "A property declared as 'name?: string' is OPTIONAL — the ? suffix. Required is the default. Exams flip this against OAS where everything is optional unless listed in 'required'.",
+          "traits apply to METHODS; resourceTypes apply to RESOURCES. Options swapping them are wrong.",
+          "baseUri with version placeholder: https://api.acme.com/{version} — version comes from the root 'version' field, not from a uriParameter you define.",
+          "!include inlines a file; 'uses:' imports a LIBRARY with namespacing. A library file must declare its own types under 'types:' and is referenced as ns.TypeName."
+        ],
+        "hands_on": "In Design Center (or any editor), author customers.raml: /customers GET (query params page, size via a 'pageable' trait), POST (Customer type with id?: string readOnly-ish pattern, name: string, email: string), /customers/{id} GET returning Customer with a 404 response declared. Extract Customer into a datatypes library and reference it via uses:.",
+        "deep_dive": "Typed body declarations: 'body: application/json: type: Customer'. Multiple responses with bodies and examples drive both mocking and APIkit error scaffolding. Annotations ((custom)) add metadata consumed by tooling/governance rules.\n\nOverlays vs extensions: an overlay changes non-behavioral aspects (descriptions, examples — e.g., translations) of a base RAML; an extension can add behavior (new resources) — classic exam distinction. securitySchemes (OAuth 2.0, Basic) declared at root and applied via securedBy at root/resource/method level.\n\nFragment types publishable to Exchange: trait, resource type, library, data type, example, security scheme, annotation, extension, overlay — reusable across the org, the heart of spec governance."
+      },
+      "quiz": [
+        {
+          "id": "API-001-q1",
+          "q": "In RAML 1.0, which declaration makes 'phone' optional on a data type?",
+          "options": ["phone: string?", "phone?: string", "optional phone: string", "phone: optional<string>"],
+          "answer": 1,
+          "explanation": "The ? suffixes the PROPERTY NAME. 'phone: string?' would instead declare a union with nil in some contexts — the property-name suffix is the canonical optional marker."
+        },
+        {
+          "id": "API-001-q2",
+          "q": "You need 'pageable' (page/size query params) behavior on a dozen GET methods. The RAML construct is:",
+          "options": ["resourceType", "trait", "library type", "overlay"],
+          "answer": 1,
+          "explanation": "Traits are reusable method-level definitions applied with 'is: [pageable]'."
+        },
+        {
+          "id": "API-001-q3",
+          "q": "Which RAML artifact can ADD new resources to an existing API definition?",
+          "options": ["Overlay", "Extension", "Trait", "Annotation"],
+          "answer": 1,
+          "explanation": "Extensions may add/modify behavior; overlays may only change non-behavioral metadata like descriptions and examples."
+        }
+      ],
+      "difficulty": "intermediate",
+      "prerequisites": [],
+      "ai_tags": ["raml", "api-design", "types", "traits", "fragments"]
+    },
+    {
+      "concept_id": "API-002",
+      "title": "OAS 3.0 & Choosing a Spec Language",
+      "card": {
+        "what": "OpenAPI Specification 3.0 is the industry-standard API description format (JSON/YAML): paths, operations, components (schemas, parameters, responses, securitySchemes), servers. Anypoint Platform treats OAS as a first-class citizen alongside RAML — Design Center edits both, Exchange publishes both, APIkit scaffolds both.",
+        "how": "components/schemas hold JSON-Schema-based models referenced via $ref: '#/components/schemas/Customer'. Required fields are listed in a 'required' array (opposite default to RAML). Reuse across files/specs is via $ref to Exchange-published fragments. servers[] replaces RAML's baseUri and supports multiple environments/variables.",
+        "exam_traps": [
+          "OAS: properties are OPTIONAL unless named in 'required'. RAML: properties are REQUIRED unless suffixed with ?. Direct inversion — heavily tested.",
+          "OAS 3.0 has no native equivalent of RAML traits/resourceTypes — reuse is via $ref'd components and (in tooling) shared fragments; an answer claiming OAS 'traits' is wrong.",
+          "callbacks and links exist in OAS 3.0 for async notification description — RAML has no direct equivalent.",
+          "Anypoint can convert RAML→OAS (and vice versa) on Exchange download, but conversions are lossy for RAML-specific constructs (traits flattened)."
+        ],
+        "hands_on": "Recreate your Chapter-2 customers API as OAS 3.0 in Design Center: paths /customers (get with page/size parameters via components/parameters, post with requestBody $ref to Customer schema), /customers/{id} with a 404 response component. Compare line count and reuse ergonomics with the RAML version — form your own opinion on when you'd pick each.",
+        "deep_dive": "Decision drivers (MCIA flavor): pick RAML when you live fully inside Anypoint and want trait/resourceType-driven governance and Exchange fragment reuse; pick OAS when consumers/tools outside MuleSoft matter (most enterprises now default to OAS for portability). Governance rulesets in Anypoint API Governance apply to both.\n\nOAS 3.1 aligns with full JSON Schema; platform support targets 3.0 semantics first — be careful with 3.1-only keywords. securitySchemes cover http (bearer), apiKey, oauth2 (flows object), openIdConnect. servers variables enable {env}.api.acme.com templating.\n\nAPIkit behavior is equivalent for both languages: it generates one main flow with a router plus a flow per method+resource, and maps spec-declared error responses."
+      },
+      "quiz": [
+        {
+          "id": "API-002-q1",
+          "q": "In OAS 3.0, how is a schema property made required?",
+          "options": [
+            "required: true on the property",
+            "Listing the property name in the schema-level 'required' array",
+            "Suffixing the property with !",
+            "All properties are required by default"
+          ],
+          "answer": 1,
+          "explanation": "OAS requires an explicit required[] list — the opposite default of RAML."
+        },
+        {
+          "id": "API-002-q2",
+          "q": "Which capability exists in RAML 1.0 but has NO direct OAS 3.0 equivalent?",
+          "options": ["Reusable schemas", "traits/resourceTypes", "Multiple servers", "Security schemes"],
+          "answer": 1,
+          "explanation": "OAS reuses via $ref components; it lacks RAML's trait/resourceType templating."
+        },
+        {
+          "id": "API-002-q3",
+          "q": "A partner ecosystem consumes your APIs with non-MuleSoft tooling. Strongest argument for OAS over RAML?",
+          "options": [
+            "OAS performs better at runtime",
+            "Industry-wide tool portability of the contract",
+            "OAS specs cannot be mocked",
+            "RAML cannot be published to Exchange"
+          ],
+          "answer": 1,
+          "explanation": "The runtime doesn't care; the ecosystem does. OAS is the lingua franca outside Anypoint."
+        }
+      ],
+      "difficulty": "intermediate",
+      "prerequisites": ["API-001"],
+      "ai_tags": ["oas", "openapi", "api-design", "spec-comparison"]
+    },
+    {
+      "concept_id": "API-003",
+      "title": "Exchange, Mocking & the Design Lifecycle",
+      "card": {
+        "what": "Anypoint Exchange is the org-wide asset catalog: API specs, fragments, connectors, templates, examples, custom assets. Design Center's mocking service serves a live, spec-derived fake of your API so consumers integrate BEFORE you build — the feedback loop at the core of API-first.",
+        "how": "Publish from Design Center to Exchange with asset versioning (asset version vs API version, e.g., 1.0.3 of 'v1'). The mocking service generates responses from your declared examples/types; toggle it public/private with expiring links. Consumers discover the spec in Exchange, request access (when managed in API Manager), and scaffold implementations by importing from Exchange into Studio/ACB.",
+        "exam_traps": [
+          "Asset version (1.0.3) vs API version (v1): minor/patch asset versions iterate the SAME API major version. Breaking changes = new major API version, new API instance. Exams probe which bump is needed for a breaking change.",
+          "The mocking service returns DECLARED examples — if you defined none, it fabricates from types. It does not execute business logic; answers implying stateful mock behavior are wrong.",
+          "Publishing to Exchange does NOT create an API instance in API Manager — managing/governing requires adding the API in API Manager (autodiscovery pairing comes later).",
+          "Exchange assets are scoped to the organization/business groups — public portal exposure is an explicit choice (public portal customization)."
+        ],
+        "hands_on": "Publish your customers spec to Exchange. Turn on the mocking service in Design Center/Exchange, hit the mock URL with curl from outside, and confirm your declared example is returned. Then iterate: add a field to Customer, republish as a patch asset version, and watch the mock update.",
+        "deep_dive": "Exchange supports lifecycle states (stable/deprecated) and asset reviews. The public portal can be customized (branding, pages) for external developer experience. REST Connect auto-generates a connector from any published REST spec — meaning every spec published to Exchange becomes a Studio-usable connector for free, a frequently-underused feature and an exam point.\n\nDesign-lifecycle in exam terms: Design (Design Center, mock, iterate with consumers) → Publish (Exchange, versioned) → Implement (APIkit scaffold from Exchange) → Manage (API Manager instance + policies) → Monitor. Each stage's tool mapping is fair game for questions."
+      },
+      "quiz": [
+        {
+          "id": "API-003-q1",
+          "q": "You add a required field to an existing request body — a breaking change. Correct versioning action?",
+          "options": [
+            "Patch asset version (1.0.4)",
+            "Minor asset version (1.1.0)",
+            "New API major version (v2) — new asset major / new managed instance",
+            "Republish same version"
+          ],
+          "answer": 2,
+          "explanation": "Breaking contract changes require a new major API version; consumers migrate deliberately."
+        },
+        {
+          "id": "API-003-q2",
+          "q": "What does publishing a REST API spec to Exchange automatically provide for Studio users?",
+          "options": [
+            "A deployed mock server in CloudHub",
+            "An auto-generated connector via REST Connect",
+            "An API Manager instance",
+            "MUnit tests"
+          ],
+          "answer": 1,
+          "explanation": "REST Connect turns published specs into ready-to-use connectors — discovery-driven reuse."
+        },
+        {
+          "id": "API-003-q3",
+          "q": "The mocking service responses are derived from:",
+          "options": [
+            "A recording of the real backend",
+            "Declared examples and type definitions in the spec",
+            "Hand-written JavaScript stubs",
+            "The implementation flows"
+          ],
+          "answer": 1,
+          "explanation": "Mocks are generated from the contract — examples first, types as fallback."
+        }
+      ],
+      "difficulty": "intermediate",
+      "prerequisites": ["API-001"],
+      "ai_tags": ["exchange", "mocking", "versioning", "api-lifecycle"]
+    },
+    {
+      "concept_id": "API-004",
+      "title": "APIkit: From Contract to Scaffolded Implementation",
+      "card": {
+        "what": "APIkit generates a Mule implementation skeleton from a RAML/OAS spec: a main flow with an APIkit Router, one flow per resource+method pair (get:\\customers:customers-config), and error handling mapped from the spec's declared responses.",
+        "how": "Import the spec from Exchange (or local) when creating the project; APIkit parses it and scaffolds flows named by convention. The Router validates incoming requests against the contract (URI, query params, headers, body types when enabled) and routes to the matching flow. Change the spec → right-click → 'Generate flows from API' regenerates missing flows without overwriting your logic.",
+        "exam_traps": [
+          "Flow NAMES are the routing contract: get:\\customers\\(customerId):customers-config — renaming the flow breaks routing. Exams show a renamed flow and ask why a 404/405 occurs.",
+          "The APIkit router returns 400 for requests violating the spec (bad query param type) BEFORE your flow runs — validation is contract-level, a common 'where did this 400 come from' scenario.",
+          "APIkit console is a dev-time interactive console; disable/do not expose it in production answers.",
+          "Scaffolding from an Exchange-published spec keeps a dependency link — updating the spec version in the pom updates the contract the router enforces."
+        ],
+        "hands_on": "Scaffold a project from your Exchange-published customers spec. Implement get:\\customers to return a static typed list. Send a request with ?page=abc (declared integer) and observe the router's 400 without your flow executing. Rename a generated flow and watch routing break; restore it.",
+        "deep_dive": "The generated main flow: HTTP Listener → APIkit Router; error handler with on-error-propagate per APIKIT:BAD_REQUEST, APIKIT:NOT_FOUND, APIKIT:METHOD_NOT_ALLOWED, etc., each setting statusCode via the listener's error response. Customize these to your error contract — but keep spec and implementation aligned (governance).\n\nheaders/query validation strictness toggles on the router config (validations). For OAS specs the same convention applies. Multiple APIs in one app = multiple router configs. APIkit for SOAP exists (WSDL-driven) — niche but known.\n\nDesign-first discipline: implementation diverging from the contract is the cardinal sin; CI should re-validate (api-console tests / governance rulesets)."
+      },
+      "quiz": [
+        {
+          "id": "API-004-q1",
+          "q": "A consumer sends GET /customers?page=two against an APIkit app where page is declared integer. What happens?",
+          "options": [
+            "Your get:\\customers flow runs with page coerced to null",
+            "The APIkit Router rejects with 400 before your flow executes",
+            "A 500 from a DataWeave coercion error",
+            "The request succeeds; validation is response-side only"
+          ],
+          "answer": 1,
+          "explanation": "The router enforces the contract at the boundary — your logic never sees invalid requests."
+        },
+        {
+          "id": "API-004-q2",
+          "q": "Why did renaming flow 'get:\\customers:customers-config' to 'getCustomers' break the API with 404s?",
+          "options": [
+            "Flow names are arbitrary; something else broke",
+            "APIkit routes by flow-naming convention matching method+resource+config",
+            "The HTTP listener path changed",
+            "Renames require runtime restart"
+          ],
+          "answer": 1,
+          "explanation": "The name IS the routing binding in APIkit."
+        },
+        {
+          "id": "API-004-q3",
+          "q": "After adding a new resource to the spec, the fastest correct path to implementation is:",
+          "options": [
+            "Hand-write a flow with a Choice router on path",
+            "Regenerate flows from the API — APIkit adds the missing scaffold",
+            "Recreate the whole project",
+            "Add a wildcard flow"
+          ],
+          "answer": 1,
+          "explanation": "Scaffolding is incremental; existing implemented flows are untouched."
+        }
+      ],
+      "difficulty": "intermediate",
+      "prerequisites": ["API-001", "API-002"],
+      "ai_tags": ["apikit", "scaffolding", "contract-validation", "routing"]
+    }
+  ],
+  "side_quests": [
+    {
+      "quest_id": "API-SQ1",
+      "title": "Fragment Forge",
+      "description": "Build an Exchange fragment library: a 'pageable' trait, an 'ErrorResponse' data type, and a 'secured' trait (OAuth 2.0 security scheme). Publish each as a separate Exchange asset, then author a new API spec that uses: all three from Exchange. This is exactly how platform teams enforce consistency.",
+      "xp": 150
+    },
+    {
+      "quest_id": "API-SQ2",
+      "title": "Contract Diplomacy",
+      "description": "Take one API you know from work. Write BOTH a RAML 1.0 and an OAS 3.0 version of two of its resources. Produce a 10-line comparison: reuse, readability, governance, consumer portability. Defend a recommendation.",
+      "xp": 150
+    }
+  ],
+  "boss": {
+    "boss_id": "BOSS-02",
+    "title": "The Spec Wraith",
+    "intro": "The Spec Wraith feeds on contract drift and versioning sins. It will test whether your API-first discipline is real or theater.",
+    "mcq": [
+      {
+        "id": "BOSS-02-q1",
+        "q": "RAML: 'email: string' inside a type declaration. OAS: 'email: {type: string}' with no required[] entry. A request omits email. Which validation outcome is correct?",
+        "options": [
+          "Both reject — email required in both",
+          "RAML-validated API rejects (required by default); OAS-validated API accepts (optional by default)",
+          "Both accept",
+          "RAML accepts; OAS rejects"
+        ],
+        "answer": 1,
+        "explanation": "Opposite defaults — the single most reliable trap in spec questions."
+      },
+      {
+        "id": "BOSS-02-q2",
+        "q": "A team publishes spec v1 asset 1.0.0, consumers build against the mock. The team then renames a response field before go-live. Minimal-friction correct action?",
+        "options": [
+          "Republish as 1.0.1 — renames are patches",
+          "It's a breaking change to the contract: bump appropriately and notify consumers; pre-GA you may negotiate, but the mock consumers ARE consumers",
+          "Disable the mock so nobody notices",
+          "Breaking changes are fine before API Manager onboarding"
+        ],
+        "answer": 1,
+        "explanation": "API-first means the mock-consuming integrations are real consumers. Field renames break them regardless of lifecycle stage."
+      },
+      {
+        "id": "BOSS-02-q3",
+        "q": "Which Exchange capability lets a Salesforce team consume your published Orders API spec with zero Mule coding?",
+        "options": ["API Governance", "REST Connect auto-generated connector", "Runtime Manager", "RAML overlays"],
+        "answer": 1,
+        "explanation": "REST Connect generates a connector from the spec — consumable in Studio/Composer."
+      },
+      {
+        "id": "BOSS-02-q4",
+        "q": "An APIkit app returns APIKIT:METHOD_NOT_ALLOWED. The cause is:",
+        "options": [
+          "The backend is down",
+          "Request used an HTTP method not declared for that resource in the spec",
+          "A missing flow for a declared method",
+          "Router config points at the wrong spec"
+        ],
+        "answer": 1,
+        "explanation": "405 maps to spec-undeclared methods. A missing flow for a DECLARED method would be APIKIT:NOT_IMPLEMENTED."
+      },
+      {
+        "id": "BOSS-02-q5",
+        "q": "Where should the single source of truth for your API contract live, per MuleSoft API-first practice?",
+        "options": [
+          "In the implementation's RAML copy inside src/main/resources/api",
+          "Published and versioned in Exchange, referenced by the implementation",
+          "In a wiki page",
+          "In the APIkit router config"
+        ],
+        "answer": 1,
+        "explanation": "Exchange is the catalog of record; implementations depend on the published asset version."
+      }
+    ],
+    "scenario": {
+      "prompt": "BUILD TASK — Contract or Death:\n\n1. Design an Orders API (RAML or OAS): /orders GET (pageable trait/params) + POST, /orders/{orderId} GET with 200/404, Order type with id, status enum [CREATED, SHIPPED, CANCELLED], lines array.\n2. Publish to Exchange; enable mocking; verify the mock with curl.\n3. Scaffold the implementation with APIkit from the Exchange asset.\n4. Implement GET /orders/{orderId} returning a real Order for one hardcoded id and the spec's 404 for others.\n5. Prove router validation: send an undeclared query param type violation and capture the 400.",
+      "checklist": [
+        "Spec published to Exchange with examples on every response",
+        "Mock URL returned your declared example before any implementation existed",
+        "Scaffolded flow names untouched and routing correctly",
+        "404 path returns the spec-declared error body, not a default 500",
+        "Contract violation rejected by the router, evidenced in logs"
+      ]
+    }
+  }
+}

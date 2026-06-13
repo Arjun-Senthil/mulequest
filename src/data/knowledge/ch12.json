@@ -1,0 +1,320 @@
+{
+  "chapter": 12,
+  "title": "Observability Keeper",
+  "concepts": [
+    {
+      "concept_id": "OBS-001",
+      "title": "Anypoint Monitoring: Metrics, Dashboards & Alerts",
+      "card": {
+        "what": "Anypoint Monitoring is the platform's observability hub: built-in dashboards (app metrics: requests, response times, errors; infra: CPU/memory; connector performance), custom dashboards, log search (with log points), and threshold alerts — across CloudHub, RTF, and hybrid.",
+        "how": "Built-in dashboards appear per app automatically (resolution/retention tier-dependent). Custom dashboards compose charts over metrics dimensions (app, worker, endpoint). Alerts: metric thresholds (error rate, response time, CPU, memory, custom) with durations → channels (email, webhooks via Alert integrations). Log search indexes app logs (tiered retention); log points inject field extraction without code changes.",
+        "exam_traps": [
+          "Anypoint Monitoring (app/infra metrics, logs, custom dashboards) vs API Analytics (gateway/policy/consumer metrics) vs Visualizer (runtime dependency graph) — three tools, three questions; misattribution is the trap.",
+          "Default CloudHub log retention is limited (size/time caps per worker) — compliance retention requires external forwarding; 'rely on CloudHub logs for 1-year audit' is wrong.",
+          "Monitoring agent capabilities differ by deployment target (hybrid needs the monitoring agent/sidecar setup) — 'identical everywhere' is false.",
+          "Alert fatigue design: thresholds with durations (CPU>85% for 5min) beat instant triggers — exam answers favor sustained-condition alerts."
+        ],
+        "hands_on": "For a deployed app: build a custom dashboard with p95 response time, error count, CPU, and JVM heap. Create two alerts: error-rate spike and sustained CPU. Trigger both artificially (error endpoint + CPU-burn DW loop) and verify notification delivery and the dashboard's view of the incident.",
+        "deep_dive": "Golden signals mapping for Mule APIs: latency (p50/p95/p99 per endpoint), traffic (req/s per API/consumer), errors (rate by errorType/status), saturation (CPU, heap, thread pools, connection pools) — design every dashboard around these four, not vanity metrics.\n\nSLO thinking: define SLIs (p95 latency, availability) per API, SLO targets, and alert on burn rate, not raw thresholds, for mature ops — articulate this in MCIA scenarios even though the platform's native alerting is threshold-based.\n\nVisualizer: builds the runtime dependency map from actual traffic metadata — architecture conformance checking (does reality match the intended API-led layering?) and blast-radius analysis during incidents."
+      },
+      "quiz": [
+        {
+          "id": "OBS-001-q1",
+          "q": "Which question is answered by Anypoint Monitoring rather than API Analytics?",
+          "options": [
+            "Which consumer app hit rate limits yesterday?",
+            "Is worker JVM heap approaching its limit on app X?",
+            "Which SLA tier generates most traffic?",
+            "How many policy violations occurred?"
+          ],
+          "answer": 1,
+          "explanation": "Infra/JVM/app internals = Monitoring. Consumer/policy/gateway views = API Analytics."
+        },
+        {
+          "id": "OBS-001-q2",
+          "q": "Audit requires 13 months of application log retention. CloudHub-appropriate answer?",
+          "options": [
+            "CloudHub retains logs indefinitely",
+            "Forward logs to an external system (log4j2 appender or platform log forwarding) with managed retention",
+            "Download logs manually monthly",
+            "Increase worker size"
+          ],
+          "answer": 1,
+          "explanation": "Platform log retention is bounded; compliance retention is an external-aggregator concern."
+        },
+        {
+          "id": "OBS-001-q3",
+          "q": "Best-practice alert definition for CPU?",
+          "options": [
+            "CPU > 50% instant",
+            "CPU > 85% sustained for 5 minutes",
+            "Any CPU change ±10%",
+            "Daily CPU email digest only"
+          ],
+          "answer": 1,
+          "explanation": "Sustained-threshold alerts catch real saturation while ignoring transient spikes — signal over noise."
+        }
+      ],
+      "difficulty": "intermediate",
+      "prerequisites": [],
+      "ai_tags": ["monitoring", "dashboards", "alerts", "golden-signals", "visualizer"]
+    },
+    {
+      "concept_id": "OBS-002",
+      "title": "log4j2 in Mule: Levels, Appenders & Structured Logging",
+      "card": {
+        "what": "Mule apps log through Log4j 2 (src/main/resources/log4j2.xml): loggers (category hierarchies with levels), appenders (where logs go — console, rolling file, Splunk/ELK/HTTP), and layouts (pattern vs JSON). Production logging strategy = structured, leveled, correlated, and shipped.",
+        "how": "Logger categories follow package/connector namespaces (org.mule.runtime, com.acme.app, org.mule.extension.http) — tune levels per category (e.g., DEBUG one connector, INFO elsewhere). CloudHub overrides root config partially (console appender feeds CloudHub logs) but custom appenders can ship logs externally (async appenders to avoid blocking). JSON layout + correlationId in every line enables log aggregation queries; Logger component messages should log expressions deliberately (no full payloads in prod).",
+        "exam_traps": [
+          "Logging PAYLOADS at INFO in production: PII/secrets leakage + performance (forces stream consumption, serialization) — exams and auditors both flag it; log ids/sizes/statuses, payloads only at DEBUG with masking.",
+          "On CloudHub, disabling the default appender breaks Runtime Manager log visibility — additive external appenders, not replacement, is the standard pattern (or platform log forwarding).",
+          "Async appenders (AsyncAppender/AsyncLogger) prevent log IO from blocking event threads — synchronous remote appenders on the hot path are a latency bug.",
+          "Log levels are per-category runtime-adjustable (Runtime Manager logging UI for CloudHub) — redeploying to change a log level is the wrong answer."
+        ],
+        "hands_on": "Customize log4j2.xml: JSON layout including correlationId via pattern, category com.acme at DEBUG while root stays INFO, RollingFile appender locally. Add a Logger component logging #[correlationId] + business keys (orderId) at INFO and full payload at DEBUG only. Flip the category to DEBUG via Runtime Manager without redeploy.",
+        "deep_dive": "What to log at which level — the discipline: ERROR = action needed, alerts fire; WARN = degraded but handled (failovers, retries exhausted-then-recovered); INFO = business milestones (received/processed/published, ids only); DEBUG = payloads (masked), branching decisions; TRACE = wire-level. Every line: timestamp, level, correlationId, app, flow, message — JSON keys, not prose.\n\nMasking strategies: DW-based redaction before logging, log4j pattern converters, or aggregator-side masking — defense in depth for PII.\n\nCost reality: log volume = money (aggregator ingest pricing) — sampling DEBUG, capping payload sizes, and structured fields (filterable) over prose (grep-only) are the operational maturity markers."
+      },
+      "quiz": [
+        {
+          "id": "OBS-002-q1",
+          "q": "Support needs HTTP wire details for ONE connector on a misbehaving prod app, now. Correct move?",
+          "options": [
+            "Redeploy with global DEBUG",
+            "Raise just org.mule.extension.http (or the relevant category) to DEBUG at runtime via Runtime Manager logging settings",
+            "Add payload logging code and hotfix",
+            "TRACE root logger"
+          ],
+          "answer": 1,
+          "explanation": "Category-level, runtime-adjustable, scoped diagnosis — no redeploy, no log flood."
+        },
+        {
+          "id": "OBS-002-q2",
+          "q": "Why is '<logger message=\"#[payload]\" level=\"INFO\"/>' in a prod payments flow doubly wrong?",
+          "options": [
+            "Syntax error",
+            "PII/secret leakage into logs AND potential stream consumption/serialization cost on the hot path",
+            "INFO is too low a level",
+            "Loggers can't evaluate DW"
+          ],
+          "answer": 1,
+          "explanation": "Security + performance. Business keys at INFO; masked payloads at DEBUG if ever."
+        },
+        {
+          "id": "OBS-002-q3",
+          "q": "Logs must flow to Splunk without losing Runtime Manager visibility on CloudHub. Standard setup?",
+          "options": [
+            "Replace the console appender with the Splunk appender",
+            "ADD an async Splunk/HTTP appender alongside the default (or use platform log forwarding)",
+            "Nightly log file exports",
+            "Splunk reads Runtime Manager UI"
+          ],
+          "answer": 1,
+          "explanation": "Additive shipping preserves platform visibility; async protects latency."
+        }
+      ],
+      "difficulty": "intermediate",
+      "prerequisites": ["OBS-001"],
+      "ai_tags": ["log4j2", "appenders", "structured-logging", "log-levels", "masking"]
+    },
+    {
+      "concept_id": "OBS-003",
+      "title": "Correlation & Distributed Tracing",
+      "card": {
+        "what": "Correlation stitches one business transaction across apps/queues/systems: Mule's correlationId propagates automatically over HTTP (X-Correlation-ID) and connectors that support it; distributed tracing (OpenTelemetry support in newer runtimes / Anypoint Monitoring trace features) adds spans, timing waterfalls, and cross-service context.",
+        "how": "Every Mule event has correlationId (sourced from inbound header or generated). It flows through flow-refs, VM, and HTTP requests (auto-attached header). Override deliberately via the source's correlationId expression or Tracing module (set-correlation-id) when bridging systems with their own ids. Logs including correlationId + aggregator search = the poor-man's trace; OTel-enabled runtimes export real spans to backends (Jaeger/vendor APM) with W3C traceparent propagation.",
+        "exam_traps": [
+          "correlationId ≠ messageId: correlation persists across the transaction's hops; message ids are per-message — using messageId for cross-app correlation breaks the chain.",
+          "Async/queue boundaries: correlationId rides VM/JMS/Anypoint MQ when properly configured/propagated — assuming it dies at every queue is wrong, but verifying propagation per connector IS the engineer's job.",
+          "Generating a NEW correlation id mid-chain (careless set-correlation-id) orphans downstream logs — override only at true transaction boundaries.",
+          "Tracing shows WHERE time went (spans); logs show WHAT happened; metrics show HOW MUCH — questions asking 'which tool finds the slow hop' want tracing/spans, not log levels."
+        ],
+        "hands_on": "Chain three local apps: exp → (HTTP) → prc → (VM or MQ) → sys. Log correlationId at every milestone in all three. Send one request with curl -H 'X-Correlation-ID: TEST-123' and grep all logs for TEST-123 proving end-to-end stitching, including across the queue hop.",
+        "deep_dive": "Trace context standards: W3C traceparent/tracestate headers (OTel default) vs legacy X-Correlation-ID — bridging both during transition (accept either inbound, emit both outbound) is the pragmatic enterprise pattern.\n\nSpan design for integration flows: span per inbound request, child spans per outbound dependency call (HTTP/DB/queue publish), attributes carrying business keys (orderId) — enables 'show me the trace for order 12345', the dream query.\n\nSampling economics: 100% tracing at high TPS is costly; head-based sampling (1-10%) + tail-based for errors/slow requests balances cost and diagnostic power. Correlate the three pillars: alert (metric) → traces of the window → logs of the trace — the 3-minute incident triage loop you should be able to narrate in interviews."
+      },
+      "quiz": [
+        {
+          "id": "OBS-003-q1",
+          "q": "One customer transaction spans exp-api → prc-api → MQ → sys-api. Which identifier lets support follow it through all four logs?",
+          "options": ["Each app's messageId", "The propagated correlationId logged at every hop", "Worker IP", "Thread name"],
+          "answer": 1,
+          "explanation": "Correlation id is THE cross-hop thread; everything else is hop-local."
+        },
+        {
+          "id": "OBS-003-q2",
+          "q": "p95 latency of a 4-hop transaction breached. Which observability signal pinpoints the slow hop fastest?",
+          "options": [
+            "ERROR logs",
+            "Distributed trace waterfall showing span durations per hop",
+            "CPU graphs of all apps",
+            "Request counts"
+          ],
+          "answer": 1,
+          "explanation": "Spans decompose latency by hop/dependency — that's their entire purpose."
+        },
+        {
+          "id": "OBS-003-q3",
+          "q": "A developer calls set-correlation-id with a random UUID at the start of every flow 'for uniqueness'. Consequence?",
+          "options": [
+            "Better tracing",
+            "Transaction chains fragment — downstream hops no longer share the inbound id; cross-app correlation breaks",
+            "No effect",
+            "Duplicate detection improves"
+          ],
+          "answer": 1,
+          "explanation": "Correlation works because the id is SHARED. Regenerating it severs the thread."
+        }
+      ],
+      "difficulty": "advanced",
+      "prerequisites": ["OBS-002"],
+      "ai_tags": ["correlation", "tracing", "opentelemetry", "spans", "propagation"]
+    },
+    {
+      "concept_id": "OBS-004",
+      "title": "Operational Readiness: Health, Runbooks & Incident Response",
+      "card": {
+        "what": "Production readiness beyond dashboards: health endpoints, synthetic monitoring, capacity headroom tracking, runbooks per failure mode, and a practiced incident loop (detect → triage → mitigate → resolve → postmortem). This is what 'production-grade developer' means operationally.",
+        "how": "Health checks: a /health flow returning dependency status (shallow = app up; deep = dependencies probed with timeouts — used carefully to avoid cascading checks). Synthetics: scheduled canary calls against key journeys, alerting on failure (an external cron/monitor or a Mule scheduler app). Runbooks: per-alert documents — meaning, dashboards to open, queries to run, mitigation steps, escalation. Postmortems: blameless, action-itemed, fed back into alerts/design.",
+        "exam_traps": [
+          "Deep health checks that synchronously probe ALL dependencies on every LB poll can amplify outages (health-check storms) and flap — cached/asynchronous dependency status with shallow LB checks is the mature pattern.",
+          "Synthetic monitoring tests the FULL path including DNS/LB/policies — internal metrics alone miss 'green dashboards, customers down' scenarios; exams reward synthetics for end-user-truth.",
+          "Capacity: alert at 70-80% sustained utilization to leave reaction headroom — alerting at 95% means you're already failing.",
+          "MTTR is dominated by detection+diagnosis time — runbooks and correlation discipline (OBS-003) are MTTR levers, not luxuries."
+        ],
+        "hands_on": "Productionize one quest app: /health (shallow) + /health/deep (cached dependency probes, 2s timeout each), a synthetic canary flow (Scheduler every 5 min hitting the main journey, alert-log on failure), and write RUNBOOK.md covering your three most likely alerts with exact queries/dashboards/commands. Run a 30-minute game day: break a dependency, follow your own runbook cold.",
+        "deep_dive": "The incident narrative you should be able to deliver: alert fires (error-rate burn) → open the API dashboard (which endpoint? which consumer?) → traces for the window (which hop?) → logs by correlationId (what exactly failed?) → mitigation decision tree (rollback? breaker? scale? feature-flag?) → comms cadence → postmortem with action items closed within a sprint. Practicing this loop on game days is what separates teams with 5-minute MTTRs from 5-hour ones.\n\nReadiness review checklist before any go-live: SLOs defined, dashboards per golden signal, alerts with runbooks, log retention compliant, tracing propagation verified, capacity tested to 2× forecast, rollback rehearsed, on-call schedule + escalation real. Carry this list into MCIA scenario answers — it converts abstract questions into structured, senior-sounding responses."
+      },
+      "quiz": [
+        {
+          "id": "OBS-004-q1",
+          "q": "The LB health check calls /health which synchronously pings the DB, 3 APIs, and a queue. During a brief DB blip, ALL workers get marked unhealthy and traffic drops to zero. Lesson?",
+          "options": [
+            "Health checks are bad",
+            "LB checks should be shallow (app alive); deep dependency status belongs in a separate cached/async endpoint that humans and dashboards consume",
+            "The DB should be faster",
+            "Remove health checks from the LB"
+          ],
+          "answer": 1,
+          "explanation": "Coupling LB membership to every dependency converts partial degradation into total self-inflicted outage."
+        },
+        {
+          "id": "OBS-004-q2",
+          "q": "All internal metrics are green but customers report failures. Which practice would have caught it?",
+          "options": [
+            "More log levels",
+            "Synthetic monitoring exercising the real external path (DNS, LB, policies, auth) on a schedule",
+            "Bigger dashboards",
+            "Weekly manual testing"
+          ],
+          "answer": 1,
+          "explanation": "Synthetics measure the user's truth, not the app's self-image — the classic gap is at the edge (certs, DNS, policies)."
+        },
+        {
+          "id": "OBS-004-q3",
+          "q": "Which artifact most directly reduces MTTR at 3am for the on-call engineer?",
+          "options": [
+            "The architecture diagram",
+            "A per-alert runbook with exact dashboards, queries, and mitigation steps",
+            "The git history",
+            "The MCIA certificate"
+          ],
+          "answer": 1,
+          "explanation": "At 3am nobody derives diagnosis steps from first principles — they execute the runbook."
+        }
+      ],
+      "difficulty": "advanced",
+      "prerequisites": ["OBS-001"],
+      "ai_tags": ["health-checks", "synthetics", "runbooks", "incident-response", "slo"]
+    }
+  ],
+  "side_quests": [
+    {
+      "quest_id": "OBS-SQ1",
+      "title": "The Glass Castle",
+      "description": "Take your Chapter 11 event-driven slice and make it fully observable: JSON structured logs with correlationId at every milestone in every app, custom dashboard with golden signals, 2 alerts with runbooks, and a documented end-to-end trace (grep evidence) of one transaction crossing the queue. Bonus: wire OpenTelemetry export if your runtime supports it.",
+      "xp": 200
+    },
+    {
+      "quest_id": "OBS-SQ2",
+      "title": "Game Day General",
+      "description": "Design and execute a 45-minute game day against any quest app: 3 injected failures (dependency death, latency injection, poison message), on-call (you) follows runbooks only, scribe notes (also you) capture detection→mitigation timings. Write the blameless postmortem with 3 action items. Do the action items.",
+      "xp": 150
+    }
+  ],
+  "boss": {
+    "boss_id": "BOSS-12",
+    "title": "The Keeper of the Dark",
+    "intro": "The Keeper thrives where there are no logs, no traces, no alerts — only users tweeting that your API is down. Light every corner, or be debugged BY production.",
+    "mcq": [
+      {
+        "id": "BOSS-12-q1",
+        "q": "An incident: error-rate alert fired at 14:02. Match the optimal triage sequence:",
+        "options": [
+          "Restart everything, then look",
+          "Dashboard (scope: which API/endpoint/consumer) → traces in the window (which hop) → logs by correlationId (exact failure) → targeted mitigation",
+          "Grep all logs from midnight",
+          "Call the DBA first, always"
+        ],
+        "answer": 1,
+        "explanation": "Metrics scope it, traces localize it, logs explain it, then you act. Random restarts destroy evidence."
+      },
+      {
+        "id": "BOSS-12-q2",
+        "q": "Which logging configuration earns the Keeper's curse? (pick the WORST)",
+        "options": [
+          "JSON layout, correlationId field, business keys at INFO",
+          "Root DEBUG in prod, payloads at INFO, sync HTTP appender on the request path, no masking",
+          "Category-level DEBUG temporarily via Runtime Manager",
+          "Async Splunk appender alongside console"
+        ],
+        "answer": 1,
+        "explanation": "Every prod-logging sin in one config: volume flood, PII leakage, latency coupling, irreversibility."
+      },
+      {
+        "id": "BOSS-12-q3",
+        "q": "Trace shows: exp-api 20ms, prc-api 30ms, queue wait 4.2s, sys-api 50ms. The latency fix conversation should center on:",
+        "options": [
+          "Faster DW in exp-api",
+          "Consumer throughput/backlog on the queue (scaling consumers, prefetch, or re-evaluating sync-over-async for this journey)",
+          "More vCores for sys-api",
+          "Removing the trace overhead"
+        ],
+        "answer": 1,
+        "explanation": "The waterfall says the transaction spent 97% of its life waiting in the queue — that's a consumer-capacity or pattern-fit problem."
+      },
+      {
+        "id": "BOSS-12-q4",
+        "q": "Compliance asks: 'prove order 88421 was processed and show every system it touched.' Your architecture answers this in minutes because:",
+        "options": [
+          "You remember it",
+          "Business-key-bearing structured logs + propagated correlation across all hops let one query reconstruct the journey",
+          "The DB has a row",
+          "Monitoring screenshots exist"
+        ],
+        "answer": 1,
+        "explanation": "Auditability is an architecture property: correlation + structured logging + retention designed in advance."
+      },
+      {
+        "id": "BOSS-12-q5",
+        "q": "Your team's alerts: 240/day, 97% ignored. The Keeper's prescription?",
+        "options": [
+          "More alerts for coverage",
+          "Alert review: delete/aggregate noise, sustained-threshold + SLO-burn conditions only, every surviving alert gets a runbook and an owner — alerts must be actionable or they don't exist",
+          "Mute channel at night",
+          "Hire more on-call"
+        ],
+        "answer": 1,
+        "explanation": "Alert fatigue is a system design failure. Few, actionable, owned alerts beat exhaustive noise."
+      }
+    ],
+    "scenario": {
+      "prompt": "BUILD TASK — Light the Dark:\n\nFull observability treatment on your three-app chain (exp → prc → queue → sys):\n1. Structured JSON logs with correlationId + business keys at defined milestones; masking on one sensitive field, proven.\n2. End-to-end correlation: one curl with X-Correlation-ID traced through all logs including the queue hop — submit the grep transcript.\n3. Dashboard with the four golden signals for the chain's entry point; 2 sustained-condition alerts.\n4. /health (shallow) + cached /health/deep; synthetic canary on a 5-min schedule.\n5. RUNBOOK.md for both alerts + one game-day exercise executed with timings (detect→mitigate) recorded.",
+      "checklist": [
+        "Single correlation id reconstructs the full journey across all three apps",
+        "Sensitive field provably masked in all log output",
+        "Alerts fire under induced failure and route to a visible channel",
+        "Canary catches an edge failure that internal metrics missed (simulate one)",
+        "Game-day timings recorded honestly; one improvement action implemented"
+      ]
+    }
+  }
+}

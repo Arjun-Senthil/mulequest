@@ -1,0 +1,389 @@
+{
+  "chapter": 5,
+  "title": "The Connector Guild",
+  "concepts": [
+    {
+      "concept_id": "CON-001",
+      "title": "HTTP Connector Deep Mechanics",
+      "card": {
+        "what": "The HTTP connector provides the Listener (source) and Request (operation). Listener configs bind host/port/basePath with TLS contexts; Request configs hold base URL, timeouts, TLS, proxy, and authentication (Basic, OAuth client credentials, etc.).",
+        "how": "Listener: host 0.0.0.0 (containers/CloudHub), port via property, responses built from payload + attributes with statusCode/headers overrides on success and error response builders. Request: response validator decides which status codes raise errors (default: 0..399 success); failing codes raise HTTP:BAD_REQUEST, HTTP:UNAUTHORIZED, HTTP:NOT_FOUND, HTTP:METHOD_NOT_ALLOWED, HTTP:TIMEOUT, HTTP:CONNECTIVITY etc. Query/URI params and headers set declaratively or via DW maps.",
+        "exam_traps": [
+          "Default response validator treats 4xx/5xx as ERRORS raising typed HTTP:x errors — your flow continues only for <400 unless you customize the validator (success status codes range).",
+          "On CloudHub the listener MUST use host 0.0.0.0 and port ${http.port} (8081 internally) — binding localhost breaks worker routing. Classic deployment question.",
+          "HTTP:TIMEOUT (response timeout) vs HTTP:CONNECTIVITY (connection refused/DNS) are DIFFERENT error types — handlers matching the wrong one miss.",
+          "Streaming: the request body is a repeatable stream by default; disabling repeatable streaming for large uploads saves memory but allows a single read only."
+        ],
+        "hands_on": "Build a request config with responseTimeout=3000 against an endpoint you can stall (use a mock with delay). Catch HTTP:TIMEOUT specifically and return 504. Then set a custom validator accepting 404 as success and prove the flow continues with statusCode 404 in attributes instead of erroring.",
+        "deep_dive": "Connection pooling: maxConnections, connection idle timeout, and streaming response handling determine throughput; usePersistentConnections=false is a debugging tool, not a production setting. clientSocketProperties tune TCP (SO_TIMEOUT, keepalive).\n\nTLS: tls:context with trust-store/key-store — insecure=true (trust-all) must never pass code review/exam answers except explicit local testing. mTLS = key-store on BOTH sides; covered deeper in Security Sentinel.\n\nOAuth on the Request config: client-credentials grant managed by the connector (token acquisition/refresh automatic, token caching per config). Proxy config + ntlm exists for corporate egress. For resilient design pair the request with Until Successful (idempotent ops) or circuit-breaker patterns via Object Store counters — connector has no native circuit breaker, an MCIA discussion point."
+      },
+      "quiz": [
+        {
+          "id": "CON-001-q1",
+          "q": "An HTTP Request receives a 404. With DEFAULT configuration, what happens?",
+          "options": [
+            "Flow continues; attributes.statusCode == 404",
+            "HTTP:NOT_FOUND error is raised",
+            "Payload becomes null, flow continues",
+            "HTTP:CONNECTIVITY error"
+          ],
+          "answer": 1,
+          "explanation": "Default validator: only <400 is success. 404 raises the typed error; flow error handling takes over."
+        },
+        {
+          "id": "CON-001-q2",
+          "q": "Correct listener binding for a CloudHub-deployed API?",
+          "options": [
+            "localhost:8081",
+            "0.0.0.0:${http.port}",
+            "0.0.0.0:443",
+            "${fullDomain}:80"
+          ],
+          "answer": 1,
+          "explanation": "Workers route external 80/443 traffic to the app's internal ${http.port}; binding localhost makes the app unreachable."
+        },
+        {
+          "id": "CON-001-q3",
+          "q": "The downstream is UP but slow (responses after 10s; your timeout is 5s). Which error type fires?",
+          "options": ["HTTP:CONNECTIVITY", "HTTP:TIMEOUT", "MULE:RETRY_EXHAUSTED", "HTTP:SERVICE_UNAVAILABLE"],
+          "answer": 1,
+          "explanation": "Connection succeeded; the response timed out. CONNECTIVITY is for failed connections."
+        }
+      ],
+      "difficulty": "intermediate",
+      "prerequisites": [],
+      "ai_tags": ["http", "timeouts", "response-validator", "tls", "cloudhub"]
+    },
+    {
+      "concept_id": "CON-002",
+      "title": "Database Connector: Queries, Pooling & Transactions",
+      "card": {
+        "what": "The Database connector executes SQL against JDBC sources: Select, Insert, Update, Delete, Bulk operations, Stored Procedure, and DDL. Configs wrap a connection (generic JDBC, or vendor-specific) with pooling profiles.",
+        "how": "Parameterized queries use :name placeholders bound via input parameters (a DW map) — NEVER string concatenation (SQL injection + plan cache). Select streams rows as a lazy iterable; fetchSize tunes round trips. Bulk Insert/Update take an array payload applying the statement per element in one batch. Transactions: local (single resource) via the operation's transactionalAction joining a Try/flow transaction, or XA for multi-resource.",
+        "exam_traps": [
+          "Input parameters protect against SQL injection; answers concatenating #[payload.x] into SQL text are always wrong.",
+          "Select returns a STREAMING result by default — consuming it twice without repeatable streaming fails; sizeOf forces full load.",
+          "Bulk insert expects the PAYLOAD to be the array, with parameter expressions per element — not a For Each around single inserts (performance trap).",
+          "Pooling: maxPoolSize on the connector must align with DB-side limits and worker count — 4 workers × 20 pool = 80 connections at the DB. Capacity questions multiply by workers/replicas."
+        ],
+        "hands_on": "Against any local DB (H2/MySQL): parameterized select with :id from query params; bulk insert of a 100-row JSON array (single Bulk Insert op); the same as 100 single inserts in For Each — time both. Configure pooling maxPoolSize=5 and observe queueing under parallel load.",
+        "deep_dive": "Transactions in Mule: transactionalAction = ALWAYS_JOIN / JOIN_IF_POSSIBLE / NOT_SUPPORTED on operations; Try scope opens transactions (transactionalAction=ALWAYS_BEGIN). Local tx span one resource; XA (with a transaction manager, Bitronix on standalone) spans DB+JMS — heavyweight; MCIA prefers designing AROUND XA (idempotency + compensation/saga) over using it.\n\nDynamic queries (full SQL from expression) exist for legit dynamic table cases — combine with allow-listing identifiers; parameters still used for VALUES. Stored procedures: in/out params declared; result sets mapped.\n\nUpsert strategy comparison (vendor MERGE vs try-insert-catch-update vs delete+insert) and optimistic locking via version columns are integration-pattern staples that show up in scenario questions."
+      },
+      "quiz": [
+        {
+          "id": "CON-002-q1",
+          "q": "Which query construction is correct AND safe?",
+          "options": [
+            "\"SELECT * FROM orders WHERE id = \" ++ payload.id",
+            "SELECT * FROM orders WHERE id = :id, with input parameters {id: payload.id}",
+            "SELECT * FROM orders WHERE id = #[payload.id]",
+            "Dynamic query with payload interpolated"
+          ],
+          "answer": 1,
+          "explanation": "Named input parameters = prepared statements = injection-safe + plan-cacheable."
+        },
+        {
+          "id": "CON-002-q2",
+          "q": "Inserting 10,000 rows arriving as one JSON array — most efficient connector usage?",
+          "options": [
+            "For Each + Insert",
+            "Bulk Insert with the array as payload",
+            "Parallel For Each + Insert, maxConcurrency 50",
+            "A stored procedure called per row"
+          ],
+          "answer": 1,
+          "explanation": "Bulk operations batch at the JDBC level — orders of magnitude fewer round trips, one transaction."
+        },
+        {
+          "id": "CON-002-q3",
+          "q": "An app on 4 CloudHub workers has DB maxPoolSize=25. The DB allows 80 connections total. Problem?",
+          "options": [
+            "None — 25 < 80",
+            "Potentially 100 connections (4×25) exceeding the DB limit",
+            "Pools are shared across workers",
+            "CloudHub caps pools at 10"
+          ],
+          "answer": 1,
+          "explanation": "Each worker has its own pool. Always multiply by instance count — the capacity-planning trap."
+        }
+      ],
+      "difficulty": "intermediate",
+      "prerequisites": ["CON-001"],
+      "ai_tags": ["database", "sql", "pooling", "transactions", "bulk"]
+    },
+    {
+      "concept_id": "CON-003",
+      "title": "File & SFTP: Polling, Streaming & Idempotent Pickup",
+      "card": {
+        "what": "File/FTP/SFTP connectors list, read, write, move and watch directories. The On New or Updated File source polls a directory and triggers flows per matching file — the backbone of file-based B2B/batch integration.",
+        "how": "Source config: directory, matcher (glob/regex/size/age), polling frequency, watermark (timestamp-based pickup of only new/modified), and post-processing actions (moveToDirectory / renameTo / autoDelete) to prevent reprocessing. Reads yield streams with file metadata in attributes (fileName, path, size, timestamps). Write supports append/overwrite/create-new modes and lock=true for concurrent-writer safety.",
+        "exam_traps": [
+          "Without post-action (move/delete) or watermark, the SAME file is reprocessed on every poll — the most-tested file pitfall.",
+          "minAge/timeBetweenSizeCheck guard against picking up files still being written — answers ignoring partial-file pickup are wrong in 'large file arrives via SFTP' scenarios.",
+          "On multi-worker CloudHub, file polling runs on EVERY worker → duplicate processing. Fixes: primary-node-only (on-prem cluster), single worker, or redesign with a queue. Cluster questions love this.",
+          "File read is a stream: writing the same payload to two targets needs repeatable streaming enabled."
+        ],
+        "hands_on": "Build an SFTP (or local file) pickup: matcher *.csv, minAge 2s, on success move to /processed with timestamp suffix, on error (Try + on-error-propagate) move to /error. Drop a file mid-copy (simulate slow write) and verify minAge prevented premature pickup. Process the CSV rows to JSON output files.",
+        "deep_dive": "Idempotent pickup design ladder: (1) post-action move/delete (at-least-once with small dup window on crash), (2) watermarking on modified timestamp (light, time-based), (3) Idempotent Message Validator keyed on fileName/hash backed by Object Store (strongest). Combine for exactly-once-ish semantics.\n\nLarge file ETL: SFTP read stream → DW streaming (deferred) → write — constant memory at GB scale; never sizeOf/sort mid-pipeline. Batch Job integration: file → split records → batch steps (Chapter 6).\n\nSFTP specifics: key-based auth via tls/identity files; known_hosts validation (disable only in dev); reconnection strategies on the config; proxy support. Archive naming with #[attributes.fileName ++ '-' ++ now() as String {format:'yyyyMMddHHmmss'}] avoids collisions — pattern worth memorizing."
+      },
+      "quiz": [
+        {
+          "id": "CON-003-q1",
+          "q": "A file flow processes the same file repeatedly every poll. Most likely missing configuration?",
+          "options": [
+            "fetchSize",
+            "A post-processing action (move/delete) or watermark",
+            "repeatable streaming",
+            "maxConcurrency"
+          ],
+          "answer": 1,
+          "explanation": "Nothing removes/marks the file, so each poll re-matches it."
+        },
+        {
+          "id": "CON-003-q2",
+          "q": "Huge files arrive over slow SFTP; flows sometimes process half-written files. Best guard?",
+          "options": [
+            "Increase polling frequency",
+            "minAge / timeBetweenSizeCheck so only quiescent files match",
+            "autoDelete=true",
+            "Read with smaller buffer"
+          ],
+          "answer": 1,
+          "explanation": "Age/size-stability checks ensure the writer finished before pickup."
+        },
+        {
+          "id": "CON-003-q3",
+          "q": "The same SFTP-polling app scaled to 3 CloudHub workers starts triple-processing files. Correct fix per MuleSoft guidance?",
+          "options": [
+            "Add a Thread.sleep jitter",
+            "Run the poller on one worker (single-worker app or redesign: poller app → queue → scaled processors)",
+            "Lower polling frequency on two workers",
+            "Use autoDelete"
+          ],
+          "answer": 1,
+          "explanation": "CloudHub workers don't coordinate pollers. Isolate the poller or decouple via MQ; primary-node-only exists for on-prem clusters."
+        }
+      ],
+      "difficulty": "intermediate",
+      "prerequisites": [],
+      "ai_tags": ["file", "sftp", "polling", "watermark", "streaming", "idempotency"]
+    },
+    {
+      "concept_id": "CON-004",
+      "title": "JMS & Anypoint MQ: Messaging Semantics",
+      "card": {
+        "what": "JMS connector integrates brokers (ActiveMQ, IBM MQ, etc.) with queues/topics; Anypoint MQ is MuleSoft's cloud-native managed messaging (queues, exchanges, FIFO queues, DLQs) with its own connector. Both deliver async, durable decoupling.",
+        "how": "JMS: publish/consume/listener with ack modes (AUTO, MANUAL, DUPS_OK), transactions, selectors, persistent delivery mode. Topics = pub/sub (durable subscriptions for offline consumers). Anypoint MQ: Publish/Subscriber with ack modes (AUTO/MANUAL with ack/nack operations), maxRedelivery → DLQ routing, FIFO queues for ordering (lower throughput), message exchanges for fan-out, circuit breaker on the subscriber.",
+        "exam_traps": [
+          "Queue = exactly one consumer gets each message; Topic/Exchange = every subscriber gets a copy. Mixing these up in fan-out scenarios is the classic error.",
+          "AUTO ack = acked on receipt (loss risk on crash mid-processing); MANUAL ack after successful processing = at-least-once with redelivery. Reliability questions hinge on ack timing.",
+          "Anypoint MQ FIFO ordering holds per-queue with constraints (no fan-out exchanges, throughput caps); standard queues do NOT guarantee order. 'Guaranteed order' answers require FIFO or single-threaded design.",
+          "Anypoint MQ is region-scoped and NOT available on-prem-disconnected — broker choice questions test deployment constraints. JMS 2.0 shared subscriptions vs durable subscriptions also appear."
+        ],
+        "hands_on": "With Anypoint MQ (trial): create orders-q with DLQ orders-dlq (maxRedelivery 2). Publisher flow posts orders; subscriber with MANUAL ack processes and deliberately fails on a poison message ('amount': -1). Watch 2 redeliveries then DLQ arrival. Build a tiny DLQ monitor flow logging dead letters.",
+        "deep_dive": "Reliability pattern (canonical): HTTP accept → validate → publish to MQ → immediate 202 + correlationId; consumer processes with MANUAL ack, idempotency check (Object Store / Idempotent Validator on messageId), retries via redelivery, poison → DLQ + alert + replay runbook. This single pattern answers a large family of MCIA questions.\n\nBack-pressure & prefetch: subscriber prefetch size vs processing speed; circuit breaker (Anypoint MQ connector) opens on repeated downstream failure, pausing consumption — know it exists.\n\nJMS transactions: consume+publish in one local tx for broker-only flows; DB+JMS atomicity needs XA or (better) idempotent consumer design. IBM MQ specifics (channel, queue manager) only at recognition level. Choosing: existing enterprise broker → JMS; MuleSoft-native cloud, simple ops → Anypoint MQ; event streaming/replay → Kafka (Chapter 11)."
+      },
+      "quiz": [
+        {
+          "id": "CON-004-q1",
+          "q": "Five services must EACH receive every OrderCreated event. Correct Anypoint MQ design?",
+          "options": [
+            "One queue, five subscribers",
+            "A message exchange bound to five queues, one per service",
+            "Five publishes to five queues from the producer",
+            "FIFO queue with broadcast mode"
+          ],
+          "answer": 1,
+          "explanation": "Exchange = fan-out, each bound queue gets a copy with independent consumption. One queue with five subscribers would split, not copy. Five publishes couples the producer to consumers."
+        },
+        {
+          "id": "CON-004-q2",
+          "q": "A subscriber crashes after receiving (AUTO ack) but before completing processing. The message is:",
+          "options": [
+            "Redelivered automatically",
+            "Lost — it was acknowledged on receipt",
+            "Moved to DLQ",
+            "Rolled back"
+          ],
+          "answer": 1,
+          "explanation": "AUTO acks immediately. For at-least-once, MANUAL ack after processing."
+        },
+        {
+          "id": "CON-004-q3",
+          "q": "After maxRedelivery is exceeded on an Anypoint MQ queue with a DLQ assigned, the message:",
+          "options": [
+            "Is discarded",
+            "Routes to the DLQ for inspection/replay",
+            "Blocks the queue",
+            "Returns to the publisher"
+          ],
+          "answer": 1,
+          "explanation": "DLQ captures poison messages — alerting + replay procedure is the operational follow-through."
+        }
+      ],
+      "difficulty": "advanced",
+      "prerequisites": [],
+      "ai_tags": ["jms", "anypoint-mq", "ack-modes", "dlq", "fan-out", "reliability"]
+    },
+    {
+      "concept_id": "CON-005",
+      "title": "Salesforce Connector & Watermarking Patterns",
+      "card": {
+        "what": "The Salesforce connector covers CRUD (create/update/upsert), SOQL Query (+ Query All), Bulk API 2.0 jobs, and streaming sources (Subscribe Channel/Topic, Change Data Capture, Platform Events) — the most-used SaaS connector and a fixture in MCD scenarios.",
+        "how": "Auth: OAuth (JWT bearer for server-to-server — production standard), or username/password+token (dev only). Query takes SOQL with :parameters; upsert keys on an External ID field for idempotent sync. Bulk API for >2k records (async job semantics: create job, await results). Sources: Platform Events / CDC push changes; polling alternative = scheduled SOQL with watermark on LastModifiedDate.",
+        "exam_traps": [
+          "Upsert with External ID = idempotent insert-or-update in ONE call — the canonical answer to 'sync without duplicates'. Plain create on retry duplicates.",
+          "Bulk API is ASYNC: submitting the job isn't completion — results must be polled/retrieved. Treating bulk submit as synchronous success is the trap.",
+          "SOQL is not SQL: no SELECT *, relationship queries use dot/parent-child subqueries, governor limits apply (API call quotas) — answers must respect limits (batch, bulk, avoid per-record queries).",
+          "Watermark sync: query records WHERE LastModifiedDate > :watermark ORDER BY LastModifiedDate, persist the max in Object Store — boundary handling (>= vs >, same-timestamp records) is the subtle exam detail."
+        ],
+        "hands_on": "Against a Salesforce dev org: (1) upsert 5 Accounts on an External_Id__c field, run twice, prove zero duplicates; (2) scheduled flow with Object Store watermark pulling Accounts modified since the last run; (3) subscribe to a Platform Event and fire one from Salesforce dev console, observing the push into your flow.",
+        "deep_dive": "Integration-pattern selection (MCIA): real-time UI-ish needs → REST/composite; near-real-time sync → CDC/Platform Events (push, replayId for missed-event recovery); large nightly loads → Bulk API 2.0; small frequent ops → standard CRUD. ReplayId semantics: -1 new events only, -2 earliest available — durable subscriptions for gap recovery.\n\nGovernor-limit-aware design: aggregate per call (composite/batch), cache stable lookups (Object Store / Cache scope), exponential backoff on REQUEST_LIMIT_EXCEEDED.\n\nThe generic watermark pattern (query > watermark, process, persist new watermark transactionally AFTER success) transfers to DB/file/any source — Mule's os:objectstore or the Scheduler+ObjectStore combo. Failure ordering: persist watermark only after downstream success, accept reprocessing on crash (at-least-once + idempotent target)."
+      },
+      "quiz": [
+        {
+          "id": "CON-005-q1",
+          "q": "Nightly job pushes customer records to Salesforce; reruns must not create duplicates. Correct operation?",
+          "options": [
+            "create",
+            "upsert keyed on an External ID field",
+            "update",
+            "Bulk delete then create"
+          ],
+          "answer": 1,
+          "explanation": "External-ID upsert is idempotent by design — THE dedup answer for SF sync."
+        },
+        {
+          "id": "CON-005-q2",
+          "q": "You must load 500,000 records into Salesforce. Best connector approach?",
+          "options": [
+            "For Each + create",
+            "Bulk API 2.0 job (async submit, then retrieve results)",
+            "Parallel For Each + upsert, maxConcurrency 100",
+            "SOQL insert"
+          ],
+          "answer": 1,
+          "explanation": "Bulk API exists precisely for volume; it's asynchronous — submit ≠ done."
+        },
+        {
+          "id": "CON-005-q3",
+          "q": "A polling sync uses WHERE LastModifiedDate > :wm. Two records share the exact watermark timestamp; one was processed last run. Risk and standard mitigation?",
+          "options": [
+            "No risk",
+            "Missing/duplicating boundary records — use >= with idempotent processing, or track ids at the boundary",
+            "Governor limits block the query",
+            "Use SELECT *"
+          ],
+          "answer": 1,
+          "explanation": "Boundary-timestamp handling: inclusive query + idempotency (or secondary id watermark) is the robust pattern."
+        }
+      ],
+      "difficulty": "advanced",
+      "prerequisites": ["CON-002"],
+      "ai_tags": ["salesforce", "upsert", "bulk-api", "watermark", "cdc", "object-store"]
+    }
+  ],
+  "side_quests": [
+    {
+      "quest_id": "CON-SQ1",
+      "title": "The Reliable Order Intake",
+      "description": "Build the canonical reliability pattern end-to-end: HTTP POST /orders validates and publishes to Anypoint MQ (or ActiveMQ), returns 202 + correlationId. Consumer (MANUAL ack) writes to a DB with an idempotency check on orderId, poison messages hit the DLQ after 2 redeliveries, and a DLQ monitor flow logs alerts. Crash-test it: kill the consumer mid-message and verify redelivery.",
+      "xp": 200
+    },
+    {
+      "quest_id": "CON-SQ2",
+      "title": "Watermark Master",
+      "description": "Implement the generic watermark sync twice: (1) DB table → files using a timestamp watermark in Object Store; (2) Salesforce Accounts → JSON using LastModifiedDate. Document your boundary-condition choice (> vs >=) and crash-recovery behavior in comments.",
+      "xp": 150
+    }
+  ],
+  "boss": {
+    "boss_id": "BOSS-05",
+    "title": "The Guildmaster of Wires",
+    "intro": "The Guildmaster has seen every connector misconfigured in every way. Pools exhausted, files double-processed, messages lost to AUTO-ack. Prove your wiring is production-grade.",
+    "mcq": [
+      {
+        "id": "BOSS-05-q1",
+        "q": "An HTTP Request with default validator calls an API returning 201 with a Location header. What does the flow see?",
+        "options": [
+          "HTTP:CREATED error",
+          "Success: payload = response body, attributes.statusCode 201, attributes.headers.location available",
+          "Success but headers are dropped",
+          "Error — only 200 is success by default"
+        ],
+        "answer": 1,
+        "explanation": "0..399 is success by default; full response attributes are preserved."
+      },
+      {
+        "id": "BOSS-05-q2",
+        "q": "Which design correctly prevents duplicate file processing on a 2-worker CloudHub app polling SFTP?",
+        "options": [
+          "Both workers poll; rely on move-on-pickup races",
+          "Dedicated single-worker poller app publishing file references to a queue consumed by the scaled processing app",
+          "Set primaryNodeOnly=true on CloudHub",
+          "Random poll offsets"
+        ],
+        "answer": 1,
+        "explanation": "primaryNodeOnly is a server-cluster concept, not CloudHub 1.0 workers. Decouple poll (1 worker) from processing (N workers) via MQ."
+      },
+      {
+        "id": "BOSS-05-q3",
+        "q": "Money transfer: debit DB write + JMS publish must not produce a publish-without-debit. Without XA, the pragmatic pattern is:",
+        "options": [
+          "Hope and logging",
+          "Transactional outbox: write debit + outbox row in ONE DB tx; a separate publisher reads the outbox and publishes (idempotent consumer downstream)",
+          "Publish first, then debit",
+          "Two-phase commit via Until Successful"
+        ],
+        "answer": 1,
+        "explanation": "Outbox pattern gives atomicity via the single DB transaction — the modern alternative to XA, and an MCIA favorite."
+      },
+      {
+        "id": "BOSS-05-q4",
+        "q": "Anypoint MQ subscriber, MANUAL ack. Processing succeeds but the ack call itself fails (network blip). End state?",
+        "options": [
+          "Message lost",
+          "Message redelivered later — consumer must be idempotent to tolerate the duplicate",
+          "Broker auto-detects success",
+          "DLQ immediately"
+        ],
+        "answer": 1,
+        "explanation": "Unacked = redelivered. At-least-once delivery makes consumer idempotency non-negotiable."
+      },
+      {
+        "id": "BOSS-05-q5",
+        "q": "Salesforce CDC subscription was down for 30 minutes. How do you avoid losing the missed change events?",
+        "options": [
+          "Impossible — CDC is fire-and-forget",
+          "Resubscribe with the stored replayId to receive buffered events from the gap",
+          "Full table re-query always",
+          "Salesforce retries push for 72h"
+        ],
+        "answer": 1,
+        "explanation": "Replay with the last processed replayId (within retention window); fall back to watermark re-query if beyond retention."
+      },
+      {
+        "id": "BOSS-05-q6",
+        "q": "A DB Select feeding a 1M-row export runs out of memory. Which pair of changes fixes it?",
+        "options": [
+          "Bigger worker + sizeOf check",
+          "Streaming result (no full materialization) + DW streaming/deferred output writing as rows flow",
+          "fetchSize=1 + For Each",
+          "Read into a var and chunk it"
+        ],
+        "answer": 1,
+        "explanation": "End-to-end streaming keeps memory flat; any full materialization (sort, sizeOf, var copy) breaks it."
+      }
+    ],
+    "scenario": {
+      "prompt": "BUILD TASK — The Guild Trial:\n\nBuild 'order-bridge': \n1. SFTP pickup of orders-*.csv (minAge guard, move to /processed | /error).\n2. Rows → canonical JSON; invalid rows (missing orderId/amount) diverted to a rejects file with reasons.\n3. Valid orders published to a queue (Anypoint MQ or ActiveMQ); consumer upserts into a DB table (orderId unique) — idempotent on redelivery.\n4. A /orders/{id} HTTP API querying the DB with parameterized SQL, 404 mapped from empty result, response timeout + HTTP:TIMEOUT handler on any downstream enrichment.\n5. Kill-test: stop the consumer mid-batch, restart, prove no loss and no duplicates.",
+      "checklist": [
+        "File pickup is idempotent (no reprocessing across restarts) with partial-file guard",
+        "Reject handling produces a usable rejects file with row-level reasons",
+        "Queue consumer is provably idempotent (rerun shows same DB state)",
+        "All SQL parameterized; /orders/{id} returns clean 404 (not 500) on missing",
+        "Kill-test evidence: logs/DB state showing redelivery without duplication"
+      ]
+    }
+  }
+}

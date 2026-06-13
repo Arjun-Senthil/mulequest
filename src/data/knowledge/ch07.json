@@ -1,0 +1,315 @@
+{
+  "chapter": 7,
+  "title": "Security Sentinel",
+  "concepts": [
+    {
+      "concept_id": "SEC-001",
+      "title": "OAuth 2.0 Flows & API Protection",
+      "card": {
+        "what": "OAuth 2.0 delegates authorization via tokens. Grant types: client_credentials (system-to-system — the integration workhorse), authorization_code (+PKCE, user-facing), refresh_token. In Anypoint, OAuth enforcement happens via API Manager policies backed by an identity/authorization provider.",
+        "how": "Client app obtains an access token from the authorization server (Anypoint's OpenAM/Okta/Azure AD/any OIDC provider) and presents it as Authorization: Bearer. The Mule API's OAuth 2.0 Access Token Enforcement policy validates the token (introspection endpoint or local JWT validation) and optionally checks scopes. Client credentials for the policy come from connected-app/client registrations in the provider.",
+        "exam_traps": [
+          "client_credentials has NO user and NO refresh token (just re-request) — options describing refresh tokens or consent screens for client_credentials are wrong.",
+          "The OAuth policy validates tokens; it does NOT issue them — Anypoint API Manager is a resource-server-side enforcer, not the authorization server.",
+          "Scopes vs roles: scopes are token-carried permissions checked by the policy; SLA tiers and client approval are SEPARATE (Client ID enforcement / contracts) — exams mix these enforcement layers.",
+          "authorization_code without PKCE in a public client (SPA/mobile) is wrong by modern standards — PKCE is the expected answer."
+        ],
+        "hands_on": "Register a connected app (or Okta dev tenant client). Obtain a client_credentials token via curl. Apply the OAuth enforcement policy (or JWT validation policy) to a deployed API and prove: no token → 401, valid token → 200, token missing required scope → 403.",
+        "deep_dive": "Token validation styles: introspection (network hop to provider per request — revocation-aware, slower; caching configurable) vs local JWT validation (signature + claims, fast, revocation-blind until expiry). Trade-off language is MCIA material.\n\nAnypoint specifics: external identity provider configured at org level for client management (OIDC dynamic client registration); connected apps for platform API access with scoped grants (act-on-behalf vs own-credentials).\n\nFull flow recall for authorization_code+PKCE: app → authorize endpoint (code_challenge) → user authn/consent → code → token endpoint (code_verifier) → access+refresh tokens. Know where each validation occurs and that the Mule API only ever sees the access token."
+      },
+      "quiz": [
+        {
+          "id": "SEC-001-q1",
+          "q": "Two Mule apps communicate service-to-service with OAuth. Correct grant type?",
+          "options": ["authorization_code", "client_credentials", "implicit", "password"],
+          "answer": 1,
+          "explanation": "No user context = client_credentials. The others involve users (and implicit/password are deprecated)."
+        },
+        {
+          "id": "SEC-001-q2",
+          "q": "The OAuth Access Token Enforcement policy on your API is responsible for:",
+          "options": [
+            "Issuing tokens to clients",
+            "Validating presented tokens (and scopes) before requests reach your flows",
+            "Storing user passwords",
+            "Generating refresh tokens"
+          ],
+          "answer": 1,
+          "explanation": "API Manager policies enforce; the authorization server issues."
+        },
+        {
+          "id": "SEC-001-q3",
+          "q": "A token carries scope 'read:orders'. The request hits an endpoint requiring 'write:orders'. Expected policy response?",
+          "options": ["401 Unauthorized", "403 Forbidden", "404", "200 with read-only data"],
+          "answer": 1,
+          "explanation": "Authenticated but insufficient permission = 403. Missing/invalid token = 401. The 401/403 distinction is repeatedly tested."
+        }
+      ],
+      "difficulty": "advanced",
+      "prerequisites": [],
+      "ai_tags": ["oauth", "grants", "scopes", "token-validation", "policies"]
+    },
+    {
+      "concept_id": "SEC-002",
+      "title": "JWT: Structure, Validation & the JWT Policy",
+      "card": {
+        "what": "A JWT is a signed token: header.payload.signature (Base64URL). Claims (iss, sub, aud, exp, nbf, iat, custom) carry identity/permissions. The JWT Validation policy verifies signature and claims locally at the API edge — no introspection round trip.",
+        "how": "Signature: HS256 (shared secret) or RS256 (RSA — provider signs with private key, API validates with public key from a JWKS URL). Policy config: JWKS URI (with caching/refresh), expected issuer, audience, clock skew, custom claim checks (DW expressions). Validated claims can propagate to flows via headers/authentication context for fine-grained logic.",
+        "exam_traps": [
+          "RS256 validation needs only the PUBLIC key (via JWKS) — answers requiring the private key at the API are wrong (private key never leaves the issuer).",
+          "JWTs are SIGNED, not ENCRYPTED (JWS vs JWE) — anyone can READ claims; never put secrets in them. 'JWT hides the data' = false.",
+          "exp/nbf validated with configurable clock skew; an expired token = 401, not 403.",
+          "Local JWT validation cannot detect revocation before expiry — short TTLs + refresh are the mitigation; introspection if revocation latency matters."
+        ],
+        "hands_on": "Mint JWTs at jwt.io (HS256 with a shared secret): valid; expired; wrong audience. Apply the JWT Validation policy with issuer+audience checks and prove each case (200/401/401). Then extract a custom claim (e.g., tenant) and pass it to the flow as a header — log it.",
+        "deep_dive": "JWKS rotation: providers rotate keys; the policy caches JWKS and refreshes on unknown kid — outage scenarios where JWKS is unreachable are a resilience discussion (cache TTLs).\n\nClaims-based authorization inside flows: authentication context / propagated headers let process APIs enforce tenant isolation (WHERE tenant_id = :claimTenant) — defense in depth beyond edge policies.\n\nJWT vs opaque tokens: self-contained (scales, offline validation, revocation-blind) vs reference (introspection per call, instant revocation). MCIA wants the trade-off articulated and matched to requirements (e.g., banking → short-lived JWT + critical ops re-check)."
+      },
+      "quiz": [
+        {
+          "id": "SEC-002-q1",
+          "q": "What does the API need to validate an RS256-signed JWT?",
+          "options": [
+            "The issuer's private key",
+            "The issuer's public key (typically fetched from a JWKS endpoint)",
+            "The client secret",
+            "A database of issued tokens"
+          ],
+          "answer": 1,
+          "explanation": "Asymmetric: sign private, verify public. JWKS publishes the public keys with key ids."
+        },
+        {
+          "id": "SEC-002-q2",
+          "q": "Sensitive PII is placed inside JWT claims 'because it's encoded'. Assessment?",
+          "options": [
+            "Fine — Base64 protects it",
+            "Wrong — JWS payloads are readable by anyone holding the token; signing ≠ encryption",
+            "Fine if HS256",
+            "Only a problem over HTTP"
+          ],
+          "answer": 1,
+          "explanation": "Base64URL is encoding, not encryption. JWE exists for encryption but isn't the common API pattern."
+        },
+        {
+          "id": "SEC-002-q3",
+          "q": "A user's access was revoked, but their JWT (30-min TTL, locally validated) still works for up to 30 minutes. Standard mitigations?",
+          "options": [
+            "Nothing can be done",
+            "Shorter TTLs, refresh-token revocation, or introspection for critical operations",
+            "Re-sign all tokens",
+            "Switch to HS256"
+          ],
+          "answer": 1,
+          "explanation": "The classic self-contained-token trade-off and its mitigation set."
+        }
+      ],
+      "difficulty": "advanced",
+      "prerequisites": ["SEC-001"],
+      "ai_tags": ["jwt", "jwks", "claims", "signature", "revocation"]
+    },
+    {
+      "concept_id": "SEC-003",
+      "title": "TLS, mTLS & Certificate Management",
+      "card": {
+        "what": "TLS encrypts transport and authenticates the SERVER via certificates; mutual TLS (mTLS) adds CLIENT certificate authentication — both sides prove identity. In Mule: tls:context elements with key-stores (your identity) and trust-stores (who you trust).",
+        "how": "Server-side (listener): key-store holds the server cert+private key. Client-side (requester): trust-store holds CAs/certs you accept; add a key-store to PRESENT a client cert = mTLS. Insecure=true disables validation (dev only). CloudHub: TLS termination at the shared LB (its cert) or dedicated LB with custom certs and optional client-cert verification; CloudHub 2.0 ingress TLS context per app.",
+        "exam_traps": [
+          "Key-store vs trust-store inversion is THE trap: key-store = my identity (private key), trust-store = identities I accept (public certs). For mTLS the client needs a key-store too, and the server needs a trust-store containing the client's cert/CA.",
+          "One-way TLS authenticates the SERVER only — 'TLS proves who the client is' is false without mTLS or an app-layer credential.",
+          "Shared CloudHub LB cannot do custom-domain certs or client-cert validation — that's the Dedicated Load Balancer (CloudHub 1.0) / configurable ingress (CH 2.0).",
+          "Cert expiry is operational reality: trust chains, intermediate CAs, and rotation without downtime (dual cert periods) appear in ops scenarios."
+        ],
+        "hands_on": "Generate a CA + server cert + client cert with openssl/keytool. Configure an HTTPS listener (server key-store) → curl with --cacert. Then enforce mTLS (server trust-store with client CA) → prove curl fails without --cert/--key and succeeds with them.",
+        "deep_dive": "Cipher suites/protocol pinning (TLS 1.2+ only) configurable in tls:context. Hostname verification on requesters. PKCS12 vs JKS store formats.\n\nWhere termination happens matters architecturally: edge-terminated TLS (LB) + re-encrypt to workers vs end-to-end mTLS — compliance requirements (e.g., end-to-end for PCI scopes) drive the answer. Flex Gateway terminates and can enforce mTLS for non-Mule backends too.\n\nSecrets Manager (next concept) stores TLS artifacts for CloudHub DLB/CH2.0 — keystores never in git. Certificate problem triage: -Djavax.net.debug=ssl handshake reading is a real-world MCIA-adjacent skill."
+      },
+      "quiz": [
+        {
+          "id": "SEC-003-q1",
+          "q": "For an HTTPS listener with mTLS in Mule, the tls:context needs:",
+          "options": [
+            "Trust-store only",
+            "Key-store (server identity) + trust-store (accepted client certs/CAs)",
+            "Key-store only",
+            "Two key-stores"
+          ],
+          "answer": 1,
+          "explanation": "Serve identity from the key-store; verify clients against the trust-store."
+        },
+        {
+          "id": "SEC-003-q2",
+          "q": "A Mule app calls a partner API that requires client certificates. Where does the client cert + private key go?",
+          "options": [
+            "The request config's trust-store",
+            "The request config tls:context KEY-store",
+            "An Authorization header",
+            "The listener's key-store"
+          ],
+          "answer": 1,
+          "explanation": "Presenting identity = key-store, on the REQUESTER side this time. Direction-flipping is the exam's favorite move."
+        },
+        {
+          "id": "SEC-003-q3",
+          "q": "Standard one-way TLS to api.vendor.com proves:",
+          "options": [
+            "The client's identity to the vendor",
+            "The server's identity to the client + channel encryption",
+            "Both parties' identities",
+            "Message-level integrity only"
+          ],
+          "answer": 1,
+          "explanation": "Server auth + encryption. Client identity needs mTLS or app-layer auth."
+        }
+      ],
+      "difficulty": "advanced",
+      "prerequisites": [],
+      "ai_tags": ["tls", "mtls", "keystore", "truststore", "certificates"]
+    },
+    {
+      "concept_id": "SEC-004",
+      "title": "Secrets: Secure Properties, Secrets Manager & Client ID Enforcement",
+      "card": {
+        "what": "Three secret-handling layers: Secure Configuration Properties (encrypted values in app config), Anypoint Secrets Manager (platform vault for TLS artifacts/shared secrets used by DLB & CH2.0), and CloudHub safely-hidden properties. Plus Client ID Enforcement — the simplest API access-control policy (client_id/client_secret per consumer app).",
+        "how": "Secure props: encrypt values with the Secure Properties Tool (AES/CBC default) → ![encrypted] in YAML → module decrypts at startup with mule.key supplied as a deployment/system property. Secrets Manager: store keystores/truststores/certificates/shared secrets; referenced by platform services. Client ID enforcement: consumers register in Exchange → request access → contract created → policy validates client_id(+secret) per request (headers/query per config) and links usage to SLA tiers.",
+        "exam_traps": [
+          "Three masking/encryption mechanisms, three purposes: secureProperties (mask in UI), Secure Config Properties (encrypt in artifact), safely-hidden (CloudHub env vars hidden) — questions probe which solves which problem.",
+          "mule.key passed via command line on-prem can leak in 'ps' output — wrapper/env injection is the hardened answer; never commit the key.",
+          "Client ID enforcement authenticates the APPLICATION (consumer app), not the USER — it's access control + analytics attribution, not user identity.",
+          "Client credentials in Exchange are per consumer-app per API contract — revoking a contract kills that consumer only (blast-radius control)."
+        ],
+        "hands_on": "Encrypt db.password with the Secure Properties Tool, wire secure:: prefix resolution, run with -M-Dmule.key=... and confirm decryption. Apply Client ID Enforcement to an API, register a consumer app in Exchange, request access, call with/without credentials (401/200), then revoke the contract and confirm 401.",
+        "deep_dive": "Defense-in-depth stack for a typical regulated API: edge TLS (or mTLS for partners) → Client ID enforcement or OAuth/JWT (consumer identity) → scopes/claims authorization → rate limiting/SLA → payload-level controls (JSON threat protection, schema validation) → secure props/secrets for all credentials → audit logging with correlation IDs (no PII in logs).\n\nSecrets Manager vs external vaults (HashiCorp): platform-native scope (TLS for DLB/CH2.0, limited app-level injection) vs general-purpose secret leasing — hybrid setups use both; exam answers should not claim Secrets Manager injects arbitrary runtime secrets into app properties on CH1.0.\n\nTokenization/format-preserving encryption (Anypoint Security on RTF) exists for payload-level PCI/PII — recognition-level for MCIA."
+      },
+      "quiz": [
+        {
+          "id": "SEC-004-q1",
+          "q": "Goal: db.password must be unreadable in git AND hidden in Runtime Manager. Correct combo?",
+          "options": [
+            "secureProperties listing only",
+            "Secure Config Properties encryption + key at deploy time + secureProperties masking entry",
+            "Base64 in YAML",
+            "Store it in mule-artifact.json"
+          ],
+          "answer": 1,
+          "explanation": "Encryption solves at-rest-in-repo; masking solves UI exposure; the runtime key solves decryption — three distinct jobs."
+        },
+        {
+          "id": "SEC-004-q2",
+          "q": "Client ID Enforcement primarily authenticates:",
+          "options": [
+            "End users",
+            "The consuming APPLICATION holding a contract for the API",
+            "The Mule runtime",
+            "The certificate chain"
+          ],
+          "answer": 1,
+          "explanation": "App-level identity for access control + per-consumer analytics/SLAs. User identity is OAuth/JWT territory."
+        },
+        {
+          "id": "SEC-004-q3",
+          "q": "Where do the keystore files for a CloudHub Dedicated Load Balancer's custom TLS belong?",
+          "options": [
+            "src/main/resources",
+            "Anypoint Secrets Manager",
+            "An S3 bucket",
+            "mule-artifact.json"
+          ],
+          "answer": 1,
+          "explanation": "DLB/CH2.0 TLS artifacts are managed via Secrets Manager — never packaged in apps or repos."
+        }
+      ],
+      "difficulty": "advanced",
+      "prerequisites": ["SEC-003"],
+      "ai_tags": ["secrets", "secure-properties", "client-id", "secrets-manager", "defense-in-depth"]
+    }
+  ],
+  "side_quests": [
+    {
+      "quest_id": "SEC-SQ1",
+      "title": "Zero-Trust Gauntlet",
+      "description": "Take your Chapter 5 order API and harden it fully: HTTPS listener with real certs, JWT validation (issuer+audience+custom tenant claim), tenant claim enforced in the DB query, all credentials via Secure Config Properties, and an audit log line per request with correlationId but zero PII. Pen-test yourself: expired token, tampered signature, cross-tenant id probing.",
+      "xp": 200
+    },
+    {
+      "quest_id": "SEC-SQ2",
+      "title": "The Handshake Whisperer",
+      "description": "Break and fix TLS deliberately: wrong truststore, expired cert, hostname mismatch, missing client cert on mTLS. For each, capture the exact exception text and write a one-line diagnosis. Build the cheat-sheet you'll use in production incidents.",
+      "xp": 150
+    }
+  ],
+  "boss": {
+    "boss_id": "BOSS-07",
+    "title": "The Sentinel Prime",
+    "intro": "The Sentinel Prime trusts no one — not your tokens, not your certs, not your YAML. It has revoked more access than you've ever granted. Authenticate yourself.",
+    "mcq": [
+      {
+        "id": "BOSS-07-q1",
+        "q": "Partner B2B API: partners must be cryptographically identified at the connection level AND rate-limited per partner. Minimal correct stack?",
+        "options": [
+          "One-way TLS + IP allowlist",
+          "mTLS (client certs per partner) + Client ID enforcement/SLA tiers per partner app",
+          "Basic auth + rate limiting",
+          "JWT only"
+        ],
+        "answer": 1,
+        "explanation": "mTLS gives connection-level identity; client-app contracts give per-partner throttling/analytics. Layers, not either/or."
+      },
+      {
+        "id": "BOSS-07-q2",
+        "q": "Your JWKS endpoint goes down for 2 hours. Locally-validating APIs with cached keys will:",
+        "options": [
+          "Reject all tokens immediately",
+          "Continue validating tokens signed with cached/known keys; fail only on unknown kid (e.g., mid-rotation)",
+          "Switch to introspection automatically",
+          "Accept all tokens"
+        ],
+        "answer": 1,
+        "explanation": "JWKS caching is the resilience buffer; rotation during the outage is the residual risk."
+      },
+      {
+        "id": "BOSS-07-q3",
+        "q": "A developer logs 'Authorization: Bearer eyJ...' headers at INFO to debug. Security verdict?",
+        "options": [
+          "Acceptable in non-prod",
+          "Token leakage into log aggregation — credentials in logs are an incident class; mask/scrub headers",
+          "Fine since JWTs expire",
+          "Fine if logs are access-controlled"
+        ],
+        "answer": 1,
+        "explanation": "Live bearer tokens in logs = replayable credentials wherever logs flow. Scrub at source."
+      },
+      {
+        "id": "BOSS-07-q4",
+        "q": "401 vs 403 from your policy stack — match the cause pairs correctly:",
+        "options": [
+          "401 = insufficient scope; 403 = missing token",
+          "401 = missing/invalid/expired credentials; 403 = authenticated but not permitted (scope/contract)",
+          "Both interchangeable",
+          "403 = expired token"
+        ],
+        "answer": 1,
+        "explanation": "Authentication failure vs authorization failure. Policies emit accordingly; so should your custom handlers."
+      },
+      {
+        "id": "BOSS-07-q5",
+        "q": "Which is the CORRECT trust configuration for: Mule app → partner API requiring mTLS, partner uses a private CA?",
+        "options": [
+          "insecure=true since the CA is private",
+          "Requester tls:context: key-store with OUR client cert+key; trust-store containing the PARTNER's CA chain",
+          "Trust-store with our cert; key-store with theirs",
+          "Add their CA to the OS trust store only"
+        ],
+        "answer": 1,
+        "explanation": "Present ours (key-store), trust theirs (trust-store with their CA). insecure=true is never the production answer."
+      }
+    ],
+    "scenario": {
+      "prompt": "BUILD TASK — The Sentinel's Vault:\n\nSecure a two-API chain end to end:\n1. Experience API: HTTPS + JWT validation policy (issuer, audience, clock skew 30s), tenant claim extracted and forwarded as x-tenant-id.\n2. Process API: reachable only with mTLS (its listener requires client certs; the experience API presents one) + validates x-tenant-id against the JWT-derived value (defense in depth).\n3. All keystores/passwords via Secure Config Properties; nothing sensitive in git or logs (prove with a grep).\n4. Negative test suite: 8 curl cases covering expired/tampered/wrong-audience JWTs, missing client cert, cross-tenant attempts — each returning the precise correct status (401/403).",
+      "checklist": [
+        "JWT policy rejects all invalid token variants with 401 and correct WWW-Authenticate",
+        "Process API connection fails without the client certificate (mTLS proven)",
+        "Cross-tenant access attempt blocked at BOTH layers (claim check + query filter)",
+        "git grep finds zero plaintext secrets; logs show zero tokens/PII",
+        "All 8 negative cases return exactly the expected status codes"
+      ]
+    }
+  }
+}

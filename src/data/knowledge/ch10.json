@@ -1,0 +1,315 @@
+{
+  "chapter": 10,
+  "title": "DevOps Enforcer",
+  "concepts": [
+    {
+      "concept_id": "DEV-001",
+      "title": "Maven & the Mule Build Lifecycle",
+      "card": {
+        "what": "Mule apps are Maven projects; the mule-maven-plugin handles packaging (mule-application jar) and deployment to every target (CloudHub 1.0/2.0, RTF, on-prem/ARM). Parent POMs + Exchange-as-Maven-repo centralize dependency and plugin governance.",
+        "how": "mvn clean package produces target/{app}-{version}-mule-application.jar. mvn deploy with a configured cloudhub2Deployment/cloudHubDeployment/runtimeFabricDeployment/armDeployment block (or CLI/API) pushes to the target; credentials via connected app (client_id/secret) — never personal accounts in CI. Exchange doubles as a Maven facade for publishing/consuming app artifacts and shared libraries; distributionManagement points at the org's Exchange repo.",
+        "exam_traps": [
+          "One artifact through environments: CI builds ONCE, the SAME jar is promoted dev→test→prod with per-env properties — rebuild-per-env answers are wrong.",
+          "Connected apps (client credentials with scoped permissions) are the CI/CD auth standard — username/password (with MFA) breaks automation and fails security review.",
+          "skipMunitTests vs skipTests: MUnit binds to Maven's test phase via its own plugin — exams test which flag/phase runs MUnit (mvn clean test runs them; -DskipMunitTests skips).",
+          "Version conflicts: connectors are mule-plugins with their own dependencies; the runtime does per-plugin classloading isolation — 'jar hell' answers from plain Java don't map 1:1."
+        ],
+        "hands_on": "Take any chapter app: configure the mule-maven-plugin with a cloudhub2Deployment (or cloudHubDeployment) block parameterized by -D properties (env, target, credentials). Run mvn clean package, then mvn deploy -DmuleDeploy with a connected app's credentials. Promote the SAME jar to a second environment by re-running with different properties only.",
+        "deep_dive": "Settings hygiene: credentials live in settings.xml on the runner (or env vars injected by the CI vault) — never in pom.xml. Parent POM pins runtime version, plugin versions, shared dependencies; org BOM pattern.\n\nExchange Maven coordinates: groupId = org ID; publishing an app to Exchange enables 'deploy from Exchange' (required model for CH2.0 pipelines).\n\nClassloading: mule-artifact.json + plugin isolation means apps export nothing by default; shared libraries (e.g., JDBC drivers) declared via sharedLibraries in the plugin config — the 'driver class not found' fix exams reference."
+      },
+      "quiz": [
+        {
+          "id": "DEV-001-q1",
+          "q": "Your pipeline rebuilds the app from the same commit for each environment. Architecturally wrong because:",
+          "options": [
+            "Slower builds",
+            "Promotes potentially different artifacts (timestamps, resolved deps) — breaks build-once/promote-many traceability",
+            "Maven forbids it",
+            "It costs more vCores"
+          ],
+          "answer": 1,
+          "explanation": "Binary provenance: what you tested must be byte-identical to what ships."
+        },
+        {
+          "id": "DEV-001-q2",
+          "q": "CI authenticates to Anypoint for deployments. Correct credential type?",
+          "options": [
+            "A developer's username/password",
+            "A connected app (client credentials) with only the needed scopes",
+            "The org admin account",
+            "An SSH key"
+          ],
+          "answer": 1,
+          "explanation": "Scoped, rotatable, MFA-immune machine identity — the platform's service-account model."
+        },
+        {
+          "id": "DEV-001-q3",
+          "q": "DB connector fails at runtime with 'Cannot load driver class oracle.jdbc.OracleDriver' though the dependency is in the pom. Standard fix?",
+          "options": [
+            "Add the jar to MULE_HOME/lib manually",
+            "Declare it under the mule-maven-plugin's sharedLibraries configuration",
+            "Set scope=provided",
+            "Shade the driver into the app"
+          ],
+          "answer": 1,
+          "explanation": "Plugin classloader isolation requires drivers be exposed as shared libraries to the connector plugin."
+        }
+      ],
+      "difficulty": "advanced",
+      "prerequisites": [],
+      "ai_tags": ["maven", "mule-maven-plugin", "artifacts", "connected-apps", "classloading"]
+    },
+    {
+      "concept_id": "DEV-002",
+      "title": "MUnit: Tests, Mocks & Coverage Gates",
+      "card": {
+        "what": "MUnit is Mule's testing framework: XML (or Java) tests running flows in an embedded runtime with mocking (mock-when), spying, assertions (incl. DataWeave matchers), and coverage reporting enforceable as a build gate.",
+        "how": "munit:test wraps Behavior (mock-when on processors selected by name/attributes, returning then-return payload/attributes/variables or raising errors), Execution (flow-ref the flow under test / set-event to seed payload), Validation (assert-that with MunitTools matchers — equalTo, containsString, hasSize; assert-expression). munit-tools::mock-when pins by processor + with-attributes (doc:name etc.). Coverage plugin computes flow/processor coverage with failBuild thresholds in the pom.",
+        "exam_traps": [
+          "mock-when matches the PROCESSOR (e.g., http:request) optionally narrowed by attributes like doc:name — mocking 'the endpoint URL' directly isn't how selection works.",
+          "then-error / then-return with an error lets you unit-test error handlers — the way to force HTTP:TIMEOUT without a slow server; candidates often miss that mocks can THROW.",
+          "Coverage metrics: application/resource/flow levels with requiredCoverage; runs during mvn test via the munit-maven-plugin — failing the BUILD on low coverage is configuration, not default.",
+          "set-event creates the test event (payload/attributes/vars); forgetting attributes when the flow reads attributes.queryParams is the classic 'NPE in test only' bug."
+        ],
+        "hands_on": "For your order API: write MUnit tests covering (1) happy path with mocked DB select returning a fixture row, (2) HTTP:CONNECTIVITY raised by a mocked enrichment request asserting your 502 mapping, (3) validation-failure 400 path. Configure coverage failBuild at 80% and run mvn clean test to see the gate in action.",
+        "deep_dive": "Test design for integration apps: unit-test FLOW LOGIC with all externals mocked; keep a thin set of integration tests against real sandboxes out-of-band (not in every CI run). DW transforms: test pure scripts via dw CLI/Playground cases or MUnit asserting transform output with file fixtures (MunitTools::getResourceAsString).\n\nSpy-when validates calls happened with expected payloads (verify-call times). Parameterized tests via munit:parameterization. Before/After suite/test scopes manage fixtures (e.g., seeding an H2).\n\nCoverage philosophy: 80%+ on process/system APIs realistic; chasing 100% through config-only flows wastes effort — articulate the trade-off, it's an interview/exam essay staple."
+      },
+      "quiz": [
+        {
+          "id": "DEV-002-q1",
+          "q": "How do you unit-test your HTTP:TIMEOUT error mapping without a slow backend?",
+          "options": [
+            "Thread.sleep in the flow",
+            "mock-when the http:request processor with then-error (typeId HTTP:TIMEOUT)",
+            "Point at a 10.255.255.1 black-hole IP",
+            "Lower the timeout to 1ms in tests"
+          ],
+          "answer": 1,
+          "explanation": "Mocks can raise typed errors — deterministic, fast, exactly the path under test."
+        },
+        {
+          "id": "DEV-002-q2",
+          "q": "Which MUnit element seeds the flow-under-test with payload AND queryParams attributes?",
+          "options": ["set-payload only", "munit:set-event with payload and attributes values", "flow-ref arguments", "mock-when"],
+          "answer": 1,
+          "explanation": "set-event builds the full test event; flows reading attributes need them provided."
+        },
+        {
+          "id": "DEV-002-q3",
+          "q": "Where is the MUnit coverage gate (fail under 80%) configured?",
+          "options": [
+            "mule-artifact.json",
+            "munit-maven-plugin configuration (coverage → failBuild + requiredApplicationCoverage) in the pom",
+            "Runtime Manager",
+            "A Studio preference"
+          ],
+          "answer": 1,
+          "explanation": "Coverage enforcement is a build-plugin concern, wired into mvn test."
+        }
+      ],
+      "difficulty": "advanced",
+      "prerequisites": ["DEV-001"],
+      "ai_tags": ["munit", "mocking", "coverage", "testing"]
+    },
+    {
+      "concept_id": "DEV-003",
+      "title": "CI/CD Pipelines & Anypoint CLI",
+      "card": {
+        "what": "A Mule CI/CD pipeline: commit → build+MUnit (+coverage gate) → package once → publish artifact (Exchange) → deploy dev → automated tests → promote (same artifact) through test/prod with approvals. Tooling: mule-maven-plugin, Anypoint CLI v4, and Platform APIs — runnable from Jenkins/GitHub Actions/GitLab/Azure DevOps.",
+        "how": "Anypoint CLI (anypoint-cli-v4) scripts what the UI does: runtime-mgr application deploy/modify, api-mgr api manage/policy apply, exchange asset upload, governance evaluations. Auth via connected app env vars. Typical GitHub Actions: jobs build→test→deploy with environments+secrets, deployment step calling mvn deploy -DmuleDeploy or CLI; API Manager config-as-code applied per environment (apiId resolution scripted).",
+        "exam_traps": [
+          "Pipeline must also promote API MANAGER state (policies, SLA tiers, alerts) — code-only pipelines that hand-configure prod policies fail the 'fully automated' requirement; CLI/Platform APIs/automated policies are the answers.",
+          "Secrets in pipelines: CI vault/secret store → env vars → settings.xml/CLI flags; any answer committing credentials or using personal tokens is wrong.",
+          "Rollback strategy: redeploy previous artifact version (immutable artifacts make this trivial) — 'fix forward only' or rebuilding old commits are weaker answers.",
+          "Environment-specific values arrive at DEPLOY time (deployment properties / secure props), not via per-env builds or branches."
+        ],
+        "hands_on": "Build a real pipeline (GitHub Actions): on PR → mvn clean test (MUnit + coverage gate); on merge to main → package, publish to Exchange, deploy to a dev environment via connected-app secrets, run a smoke test (curl health endpoint), manual approval job → promote the same artifact to a 'prod' environment. Keep the YAML in the repo.",
+        "deep_dive": "Config-as-code maturity ladder: (1) scripted app deploys; (2) + API Manager via CLI (api-mgr) or platform APIs idempotently (create-or-update semantics, apiId captured per env); (3) + governance gates (conformance check in PR); (4) + automated post-deploy verification (smoke + contract tests) and auto-rollback on failure.\n\nBranching: trunk-based with short-lived feature branches fits build-once-promote-many; GitFlow's env-branches encourage env-rebuilds (anti-pattern here).\n\nBlue/green & canary on CH2.0/RTF: deploy v2 alongside, shift traffic at the LB/ingress or via API Manager upstream weights (Flex) — recognition level. Nexus/Artifactory as alternative artifact stores when Exchange-publishing isn't the org standard for apps."
+      },
+      "quiz": [
+        {
+          "id": "DEV-003-q1",
+          "q": "Your 'fully automated' pipeline deploys apps but admins click policies into API Manager for prod. Architect's verdict?",
+          "options": [
+            "Acceptable — policies rarely change",
+            "Gap: API Manager state must be promoted as code (CLI/Platform APIs) for reproducible environments",
+            "Policies cannot be automated",
+            "Use screenshots as documentation"
+          ],
+          "answer": 1,
+          "explanation": "Environment reproducibility includes governance config — UI-only steps are drift generators."
+        },
+        {
+          "id": "DEV-003-q2",
+          "q": "Prod deploy of 2.4.0 goes bad. Fastest safe rollback given immutable artifacts in Exchange?",
+          "options": [
+            "Rebuild 2.3.x from the old tag",
+            "Redeploy the stored 2.3.x artifact (same jar that ran before) with its known config",
+            "Hotfix on prod workers",
+            "Git revert and wait for CI"
+          ],
+          "answer": 1,
+          "explanation": "Immutable, versioned artifacts exist exactly for instant, provenance-preserving rollback."
+        },
+        {
+          "id": "DEV-003-q3",
+          "q": "Which Anypoint CLI v4 command family manages deployments to CloudHub 2.0?",
+          "options": ["cloudhub-app", "runtime-mgr application", "arm servers", "exchange deploy"],
+          "answer": 1,
+          "explanation": "runtime-mgr covers CH2.0/RTF app lifecycle in CLI v4."
+        }
+      ],
+      "difficulty": "advanced",
+      "prerequisites": ["DEV-001", "DEV-002"],
+      "ai_tags": ["cicd", "anypoint-cli", "pipelines", "config-as-code", "rollback"]
+    },
+    {
+      "concept_id": "DEV-004",
+      "title": "Quality Gates: Code Review, Static Analysis & Versioning Discipline",
+      "card": {
+        "what": "Engineering hygiene that exams and real orgs grade: semantic versioning of apps/APIs, PR review standards for Mule XML/DW, static analysis (governance rulesets, custom linting), dependency/runtime upgrade strategy, and documentation-as-code.",
+        "how": "Semver: MAJOR breaking API/behavior, MINOR features, PATCH fixes — app version in pom, API major in URL/instance. Reviews check: flow size/naming, error handling completeness, externalized config, DW readability (no mega-scripts), test coverage deltas. Runtime upgrades: track LTS/Edge channels (Java 17 era runtimes), test in lower envs, leverage backward compatibility of apps. Mule LTS vs Edge release cadence governs upgrade planning.",
+        "exam_traps": [
+          "API version lives in the URL/instance for MAJOR only (v1, v2) — minor/patch must be non-breaking and invisible to consumers; '/v1.2/' in a path is an anti-pattern answer.",
+          "Runtime upgrade questions: apps declare minMuleVersion; patch updates on CloudHub can be platform-applied — pinning forever is the wrong posture; testing-then-promote is right.",
+          "Deprecation lifecycle for APIs: announce → parallel-run old+new majors → consumer migration tracking via contracts/analytics → retire. Skipping parallel-run is the trap.",
+          "Naming conventions (kebab-case assets, sys-/prc-/exp- prefixes) are governance signals — recognized in spec/asset questions."
+        ],
+        "hands_on": "Write your team's one-page Mule engineering standard: naming, flow size limits, mandatory error contract, DW style (module reuse, no inline >15 lines), test coverage floor, versioning rules, upgrade cadence. Apply it as a PR checklist to one of your quest repos and review a past chapter's app against it honestly.",
+        "deep_dive": "Version compatibility matrix thinking: app ↔ runtime (minMuleVersion), connector ↔ runtime, API spec ↔ implementation ↔ instances per environment — drift across any axis creates the subtle prod-only bugs. Track in a simple manifest.\n\nDeprecation telemetry: API Manager contracts + analytics tell you WHO still calls v1 — data-driven retirement, not guesswork. Consumer notification via Exchange portal announcements.\n\nDocs-as-code: README per app (purpose, contracts, SLOs, runbooks), Exchange asset pages generated from specs, ADRs (architecture decision records) for the big calls — the artifacts MCIA scenario answers should reference when asked 'how do you ensure maintainability'."
+      },
+      "quiz": [
+        {
+          "id": "DEV-004-q1",
+          "q": "You must add an optional response field to a v1 API. Correct version action?",
+          "options": [
+            "New major v2",
+            "MINOR bump of the spec/app — additive optional changes are non-breaking within v1",
+            "Patch with no version change",
+            "Breaking — remove the old field too"
+          ],
+          "answer": 1,
+          "explanation": "Additive+optional = backward compatible = minor. Majors are reserved for breaks."
+        },
+        {
+          "id": "DEV-004-q2",
+          "q": "How do you decide when v1 can be retired after launching v2?",
+          "options": [
+            "90 days, always",
+            "When API Manager contracts/analytics show v1 consumers migrated (or formally exempted)",
+            "When the code is deleted",
+            "Immediately — v2 supersedes"
+          ],
+          "answer": 1,
+          "explanation": "Retirement is evidence-driven via consumer telemetry, not calendar-driven."
+        },
+        {
+          "id": "DEV-004-q3",
+          "q": "A PR adds a 600-line flow with inline 80-line DW and on-error-continue around everything. Primary review verdict?",
+          "options": [
+            "Approve — it works",
+            "Reject: decompose flows, extract DW to modules/files, and replace blanket continue with typed handlers — maintainability and correctness risks",
+            "Approve with TODO",
+            "Only style nits"
+          ],
+          "answer": 1,
+          "explanation": "Blanket error-swallowing is a correctness bug; monolith flows and inline mega-DW are maintainability debt. Reviews exist for exactly this."
+        }
+      ],
+      "difficulty": "intermediate",
+      "prerequisites": ["DEV-003"],
+      "ai_tags": ["versioning", "code-review", "standards", "deprecation", "upgrades"]
+    }
+  ],
+  "side_quests": [
+    {
+      "quest_id": "DEV-SQ1",
+      "title": "Pipeline of Steel",
+      "description": "Production-grade GitHub Actions (or Jenkins) pipeline for one quest app: PR → MUnit + 80% coverage gate + governance conformance check; main → package once, publish to Exchange, deploy dev, smoke test, manual approval, promote SAME artifact to prod env, post-deploy verification, auto-rollback step on smoke failure. All secrets via the CI secret store.",
+      "xp": 200
+    },
+    {
+      "quest_id": "DEV-SQ2",
+      "title": "The Coverage Reckoning",
+      "description": "Take your Chapter 6 payment-reconciler and drive MUnit coverage ≥85% honestly: error paths, poison path, batch on-complete, idempotency branch. No assertion-free tests. Record which bugs the tests actually caught — there will be at least one.",
+      "xp": 150
+    }
+  ],
+  "boss": {
+    "boss_id": "BOSS-10",
+    "title": "The Pipeline Tyrant",
+    "intro": "The Pipeline Tyrant has zero tolerance: untested code doesn't merge, unversioned artifacts don't deploy, and anyone clicking prod configs by hand answers to him directly.",
+    "mcq": [
+      {
+        "id": "BOSS-10-q1",
+        "q": "Order the correct pipeline: (a) deploy dev (b) MUnit+coverage (c) package (d) promote same artifact (e) publish to Exchange (f) smoke tests (g) approval.",
+        "options": [
+          "c,b,a,e,f,g,d",
+          "b,c,e,a,f,g,d",
+          "a,b,c,d,e,f,g",
+          "e,c,b,d,a,g,f"
+        ],
+        "answer": 1,
+        "explanation": "Test → package once → publish → deploy dev → verify → gate → promote. Build-once is the spine."
+      },
+      {
+        "id": "BOSS-10-q2",
+        "q": "MUnit test needs the flow to receive an HTTP 404 from a mocked downstream and assert your APP:CUSTOMER_MISSING mapping. Correct mock?",
+        "options": [
+          "then-return with payload {status:404}",
+          "mock-when http:request → then-error typeId HTTP:NOT_FOUND (your error-mapping transforms it)",
+          "Spy on the logger",
+          "Real call to a 404 URL"
+        ],
+        "answer": 1,
+        "explanation": "Status-as-payload doesn't traverse the error path; raising the typed error exercises mapping + handler."
+      },
+      {
+        "id": "BOSS-10-q3",
+        "q": "Two teams' apps break only in prod: team A built per-env jars; team B's pipeline deploys API policies via UI notes. Root causes in one phrase each?",
+        "options": [
+          "Bad luck / network",
+          "Artifact drift (no build-once) / governance config drift (no config-as-code)",
+          "Maven bug / CLI bug",
+          "Wrong runtime / wrong region"
+        ],
+        "answer": 1,
+        "explanation": "Both are reproducibility failures — binary and configuration respectively."
+      },
+      {
+        "id": "BOSS-10-q4",
+        "q": "Which coverage approach earns the Tyrant's respect?",
+        "options": [
+          "100% by asserting nothing",
+          "80%+ gate with meaningful assertions, all error paths tested via then-error, coverage diff visible in PRs",
+          "Coverage disabled to ship faster",
+          "Only happy paths, prod will find the rest"
+        ],
+        "answer": 1,
+        "explanation": "Gates + assertion quality + error-path coverage — the trio that actually prevents regressions."
+      },
+      {
+        "id": "BOSS-10-q5",
+        "q": "Prod incident: yesterday's deploy must go back NOW, and the bad version must be reproducible for forensics. Your pipeline enables this because:",
+        "options": [
+          "Developers remember the old commit",
+          "Every deploy references an immutable Exchange artifact version + captured deployment config — redeploy N-1, quarantine N for analysis",
+          "Prod has source code on disk",
+          "Rollbacks are scripted screenshots"
+        ],
+        "answer": 1,
+        "explanation": "Immutable artifacts + recorded config = instant rollback + forensic reproducibility."
+      }
+    ],
+    "scenario": {
+      "prompt": "BUILD TASK — Serve the Tyrant:\n\nDeliver the full DevOps treatment to one existing quest app:\n1. MUnit suite: happy, 4xx, 5xx/timeout, idempotency-duplicate paths; coverage gate ≥80% enforced in mvn test.\n2. CI pipeline file in-repo implementing build-once/promote-many with connected-app secrets.\n3. API Manager config-as-code script (CLI or platform API calls) applying policies+SLA tiers idempotently to dev.\n4. Version + rollback drill: ship 1.1.0, then roll back to 1.0.x by artifact reference, timing the operation.\n5. A one-page engineering standard (naming, error contract, coverage floor, versioning) committed as STANDARDS.md.",
+      "checklist": [
+        "Coverage gate demonstrably fails the build when a test is removed",
+        "Same artifact hash deployed to both environments (prove it)",
+        "Policy application script is rerunnable without duplicating config",
+        "Rollback completed and timed; forensics artifact preserved",
+        "STANDARDS.md applied retroactively: one real refactor committed because of it"
+      ]
+    }
+  }
+}

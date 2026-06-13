@@ -1,0 +1,325 @@
+{
+  "chapter": 8,
+  "title": "API Governance Lord",
+  "concepts": [
+    {
+      "concept_id": "GOV-001",
+      "title": "API Manager: Instances, Autodiscovery & the Gateway",
+      "card": {
+        "what": "API Manager governs APIs at runtime: an API instance (created from an Exchange spec or as a basic endpoint) gets an API ID; the Mule app pairs with it via autodiscovery, turning the embedded gateway in the runtime into the policy enforcement point.",
+        "how": "Add API to API Manager → choose managing type (Basic endpoint / Endpoint with proxy / direct app pairing). The app declares api:autodiscovery apiId=\"${api.id}\" flowRef=\"main-flow\"; the runtime authenticates to the platform with environment client_id/client_secret (anypoint.platform.client_id/secret properties) and downloads policies/contracts/SLAs, enforcing them in-process. Alternatively deploy an auto-generated PROXY app between consumers and the implementation.",
+        "exam_traps": [
+          "Autodiscovery pairing needs the ENVIRONMENT client credentials configured on the runtime (anypoint.platform.client_id/secret) — without them the API stays 'unregistered' and policies silently don't apply. Top troubleshooting question.",
+          "API status 'Active' in API Manager + green app in Runtime Manager are INDEPENDENT — an app can run fine while tracking/policies are broken.",
+          "Proxy vs direct: proxies add a hop but decouple (good for non-Mule backends / strict separation); direct autodiscovery embeds enforcement (no extra hop). Know when each is the 'recommended' answer.",
+          "Deleting/recreating an API instance changes the API ID — the app's property must update; stale IDs = no enforcement."
+        ],
+        "hands_on": "Publish a spec to Exchange, create an API instance (direct pairing), wire api:autodiscovery with the apiId property, set platform client credentials in the runtime config, deploy, and watch the instance turn green ('Active'). Apply a rate-limit policy and verify 429s. Break the credentials and observe silent non-enforcement — burn that failure mode into memory.",
+        "deep_dive": "Gateway capability per target: Mule runtime (embedded), Flex Gateway (Envoy-based, for any backend, connected/local modes), Service Mesh (legacy K8s sidecar story). Policy download is periodic — offline runtimes keep last-known policies.\n\nEnvironment promotion: API instances exist per environment; promote configuration between envs via API Manager promotion or platform APIs/CLI in CI/CD. Labeling instances per env+version and keeping IDs in properties per environment is operational hygiene exams reference.\n\nAPI Instances expose autodiscovery for Mule, or upstream/downstream config for Flex — consolidated 'API Administration' UX in newer platform versions."
+      },
+      "quiz": [
+        {
+          "id": "GOV-001-q1",
+          "q": "Policies show as applied in API Manager but requests are clearly not being rate-limited. First thing to check?",
+          "options": [
+            "The spec version",
+            "Runtime's anypoint.platform.client_id/secret and the apiId pairing (autodiscovery registration)",
+            "CloudHub worker size",
+            "DNS"
+          ],
+          "answer": 1,
+          "explanation": "Unpaired apps enforce nothing — and fail silently. Credentials + apiId are the pairing keys."
+        },
+        {
+          "id": "GOV-001-q2",
+          "q": "You must govern a legacy .NET API with MuleSoft policies without touching its code. Best fit?",
+          "options": [
+            "api:autodiscovery in the .NET app",
+            "A Mule proxy app or Flex Gateway in front of it, managed by API Manager",
+            "Client ID checks inside .NET",
+            "Impossible"
+          ],
+          "answer": 1,
+          "explanation": "Proxy/Flex Gateway are the enforcement points for non-Mule backends."
+        },
+        {
+          "id": "GOV-001-q3",
+          "q": "api:autodiscovery's flowRef should point at:",
+          "options": [
+            "Any flow",
+            "The flow whose HTTP listener serves the API traffic (typically the APIkit main flow)",
+            "The error handler flow",
+            "A dedicated empty flow"
+          ],
+          "answer": 1,
+          "explanation": "Enforcement wraps the listener of the referenced flow — pointing elsewhere governs nothing."
+        }
+      ],
+      "difficulty": "advanced",
+      "prerequisites": [],
+      "ai_tags": ["api-manager", "autodiscovery", "gateway", "proxy", "pairing"]
+    },
+    {
+      "concept_id": "GOV-002",
+      "title": "Policies: Catalog, Ordering & Custom Policies",
+      "card": {
+        "what": "Policies are reusable enforcement units injected around API flows: security (OAuth/JWT/Client ID/IP allowlist), quality-of-service (rate limiting, spike control, caching), transformation (header injection/removal), and troubleshooting (message logging). Custom policies extend the catalog.",
+        "how": "Applied per API instance (or automated org/env-wide via Automated Policies). Each policy declares an ORDER — lower executes first inbound; security policies should precede QoS (reject unauthenticated traffic before it consumes rate-limit quota). Rate limiting = fixed windows per identifier (e.g., client_id); Spike Control = smooths bursts with a rolling window + queuing/delay; SLA-based rate limiting ties windows to the consumer's contracted tier.",
+        "exam_traps": [
+          "Rate Limiting vs Spike Control: RL protects per-consumer fairness over windows (429 on exceed, SLA-aware), Spike Control protects the BACKEND from bursts (can delay/queue briefly). Choosing which protects 'my fragile backend' = Spike Control.",
+          "Policy ORDER matters: rate-limit before auth = attackers burn your windows; the recommended order places authentication first. Expect an ordering question.",
+          "SLA-based policies REQUIRE Client ID enforcement context (the client_id identifies the tier) — SLA rate limiting without client identification cannot work.",
+          "Automated policies apply org/business-group/environment-wide and CANNOT be removed per-API by app teams — governance hammer; know the precedence."
+        ],
+        "hands_on": "Apply to one API: Client ID enforcement (order 1), SLA-based rate limiting with two tiers (Free 10/min auto-approved, Premium 1000/min manual approval), spike control (e.g., 50 req/s). Register two consumer apps on different tiers and demonstrate differentiated 429 behavior with a load script.",
+        "deep_dive": "Custom policies: built (HTTP policy project with Mule XML + YAML definition) and published to Exchange, then applicable like any policy — for org-specific concerns (custom auth headers, canonical error bodies, legacy signature schemes). Flex Gateway policies can also be custom (Rust/WASM or PDK).\n\nResource-level policies: apply to specific methods/paths via patterns — e.g., POST-only throttling.\n\nCaching policy (HTTP caching directives) vs Cache scope in flows (any payload, OS-backed) — different layers. Message logging policy for payload sampling at the edge with obfuscation. Policy + contracts data feeds API Analytics: per-client usage, policy violations — the analytics-driven SLA management loop is a favored scenario."
+      },
+      "quiz": [
+        {
+          "id": "GOV-002-q1",
+          "q": "The backend database collapses under sudden traffic bursts even though consumers stay within monthly quotas. Which policy targets THIS problem?",
+          "options": [
+            "SLA-based rate limiting",
+            "Spike Control",
+            "Client ID enforcement",
+            "JSON threat protection"
+          ],
+          "answer": 1,
+          "explanation": "Spike Control smooths instantaneous bursts protecting the backend; rate limiting handles per-consumer fairness over windows."
+        },
+        {
+          "id": "GOV-002-q2",
+          "q": "Correct inbound policy ordering for: JWT validation, rate limiting?",
+          "options": [
+            "Rate limiting first — cheaper",
+            "JWT validation first, so unauthenticated requests never consume quota",
+            "Order is irrelevant",
+            "They merge automatically"
+          ],
+          "answer": 1,
+          "explanation": "Authenticate, then meter. The reverse lets anonymous floods exhaust legitimate consumers' windows."
+        },
+        {
+          "id": "GOV-002-q3",
+          "q": "SLA-based rate limiting requires which companion mechanism?",
+          "options": [
+            "mTLS",
+            "Client ID identification (enforcement) so the consumer's tier can be resolved",
+            "OAuth only",
+            "A dedicated load balancer"
+          ],
+          "answer": 1,
+          "explanation": "Tiers attach to client applications via contracts; without client identity there is no tier to apply."
+        }
+      ],
+      "difficulty": "advanced",
+      "prerequisites": ["GOV-001"],
+      "ai_tags": ["policies", "rate-limiting", "spike-control", "sla", "policy-order"]
+    },
+    {
+      "concept_id": "GOV-003",
+      "title": "SLA Tiers, Contracts & the Consumer Lifecycle",
+      "card": {
+        "what": "SLA tiers define consumption levels (requests/window, approval mode). Consumers discover the API in Exchange, register an application, request access on a tier → a CONTRACT binds app+API+tier. Policies enforce; analytics attribute usage per contract.",
+        "how": "Define tiers on the API instance (name, limit(s), auto/manual approval). Consumer flow: Exchange portal → Request Access → select/create client app → tier → (approval) → receives client_id/secret. The SLA rate-limit policy reads the contract at enforcement. Revoking a contract or rotating credentials cuts that consumer alone. Tier changes/approvals are auditable governance events.",
+        "exam_traps": [
+          "Contracts bind a CLIENT APP to an API INSTANCE in an environment — the same app can hold contracts to many APIs; deleting the instance orphans contracts (re-request needed).",
+          "Manual-approval tiers gate production consumers (B2B), auto-approval suits internal/sandbox — picking approval mode per audience is a design question.",
+          "Credentials identify the APP; secrets rotation policies and not embedding client_secret in browsers (use OAuth instead for SPAs) are evaluation points.",
+          "429 behavior with multiple limits per tier: ANY exceeded window rejects."
+        ],
+        "hands_on": "Create Free (auto, 10/min) and Partner (manual, 5000/min) tiers. From a second (consumer) account flow: discover in Exchange, request Partner access, approve from the provider side, call with the issued credentials, exceed the limit and capture the 429 + headers (X-RateLimit-*).",
+        "deep_dive": "Multi-window tiers (e.g., 100/sec AND 100k/day) compose burst + volume control. Tier migration: upgrades/downgrades take effect on contract update — communicate via the portal.\n\nB2B onboarding playbook: public portal page → self-service request → manual approval workflow → credentials issued → usage visible in analytics → renewal/rotation policy. This lifecycle (and its automation via Platform APIs) is the 'API as a product' operating model the governance questions circle around.\n\nMonetization-ready data: per-contract analytics (requests, violations) export to billing/reporting via Anypoint Analytics APIs."
+      },
+      "quiz": [
+        {
+          "id": "GOV-003-q1",
+          "q": "A partner's integration is compromised. Fastest contained remediation?",
+          "options": [
+            "Take the API offline",
+            "Revoke that partner app's contract / rotate its credentials — other consumers unaffected",
+            "Change the API ID",
+            "Add an IP blocklist for everyone"
+          ],
+          "answer": 1,
+          "explanation": "Per-contract blast radius is the point of consumer-level credentials."
+        },
+        {
+          "id": "GOV-003-q2",
+          "q": "Tier with limits 100/sec AND 50,000/day. A client at 20/sec hits 50,001 requests at 6pm. Result?",
+          "options": [
+            "Allowed — under the per-second limit",
+            "429 — any exceeded window rejects",
+            "Throttled to 1/sec",
+            "Day window resets hourly"
+          ],
+          "answer": 1,
+          "explanation": "Multiple windows are AND-ed for admission."
+        },
+        {
+          "id": "GOV-003-q3",
+          "q": "Which approval mode fits a public developer program's sandbox tier vs its production tier?",
+          "options": [
+            "Manual / manual",
+            "Auto for sandbox; manual for production",
+            "Auto / auto",
+            "Manual for sandbox; auto for production"
+          ],
+          "answer": 1,
+          "explanation": "Frictionless trial, gated production — the standard product posture."
+        }
+      ],
+      "difficulty": "intermediate",
+      "prerequisites": ["GOV-002"],
+      "ai_tags": ["sla-tiers", "contracts", "consumer-lifecycle", "exchange-portal"]
+    },
+    {
+      "concept_id": "GOV-004",
+      "title": "Analytics, Alerts & API Governance Rulesets",
+      "card": {
+        "what": "Three governance feedback loops: API Analytics (traffic/performance/policy-violation metrics per API and consumer), API Manager + Runtime Manager alerts (threshold-driven notifications), and Anypoint API Governance (design-time conformance rulesets validating Exchange specs continuously).",
+        "how": "Analytics dashboards slice requests by API, client, policy violations, response codes/times; custom reports export via Analytics APIs. API alerts: e.g., policy-violation count, request count, response time thresholds → email/notification channels. Governance: apply rulesets (OAS best practices, naming, security requirements — e.g., 'all APIs must define 401/403 responses') to Exchange asset groups; conformance reports + notifications drive spec quality without manual review.",
+        "exam_traps": [
+          "API Analytics measures GATEWAY-level traffic (managed APIs) — apps without API Manager pairing produce no API analytics (Monitoring still sees app metrics). The 'why is analytics empty' answer is usually missing autodiscovery.",
+          "Governance rulesets validate SPECS at design time, not runtime traffic — confusing them with runtime policies is the planted error.",
+          "Alerts exist in BOTH API Manager (API-centric: violations, response time per API instance) and Runtime Manager (app-centric: CPU, memory, deployment events) — questions ask which side owns which alert.",
+          "Conformance ≠ enforcement: a non-conformant spec still deploys unless your CI gates on the governance API."
+        ],
+        "hands_on": "Generate traffic (mixed valid/invalid credentials) against your governed API. In Analytics: chart requests by client app and policy violations. Create an alert: >10 policy violations in 5 minutes → email. In API Governance, apply the 'OpenAPI Best Practices' ruleset to your spec group and fix one real finding it reports.",
+        "deep_dive": "Metrics taxonomy: API Analytics (request counts, latency percentiles per API/client/policy) vs Anypoint Monitoring (app/infra: CPU, memory, custom dashboards, log search) vs Visualizer (dependency graph from actual traffic). MCIA expects you to name the right tool per question.\n\nGovernance-as-code: rulesets are Exchange assets (Spectral-based); custom rules encode org standards (auth mandatory, kebab-case paths, info.contact present). CI integration via governance API/CLI gates PRs on conformance — 'shift-left' governance.\n\nOperational KPI design: per-API SLOs (p95 latency, error rate) with alert thresholds wired to on-call — the maturity story examiners want articulated."
+      },
+      "quiz": [
+        {
+          "id": "GOV-004-q1",
+          "q": "API Analytics shows zero data for a high-traffic Mule app. Most likely cause?",
+          "options": [
+            "Analytics is a paid add-on",
+            "The app isn't paired to an API instance (no autodiscovery) — gateway metrics never emit",
+            "Log level too low",
+            "Worker too small"
+          ],
+          "answer": 1,
+          "explanation": "No API instance pairing → no API-level analytics, regardless of traffic volume."
+        },
+        {
+          "id": "GOV-004-q2",
+          "q": "Mandate: every API spec in the org must declare OAuth security and standard error responses, checked automatically on every publish. Tool?",
+          "options": [
+            "Automated policies",
+            "API Governance rulesets applied to Exchange asset groups",
+            "MUnit",
+            "Spike Control"
+          ],
+          "answer": 1,
+          "explanation": "Design-time conformance = Governance rulesets. Automated policies are runtime enforcement."
+        },
+        {
+          "id": "GOV-004-q3",
+          "q": "Which alert belongs to Runtime Manager rather than API Manager?",
+          "options": [
+            "Policy violation count exceeded",
+            "Worker CPU > 85% for 5 minutes",
+            "API response time SLA breach",
+            "Request count per API spike"
+          ],
+          "answer": 1,
+          "explanation": "Infrastructure/app health = Runtime Manager; API traffic/policy metrics = API Manager."
+        }
+      ],
+      "difficulty": "intermediate",
+      "prerequisites": ["GOV-001"],
+      "ai_tags": ["analytics", "alerts", "governance-rulesets", "conformance", "monitoring"]
+    }
+  ],
+  "side_quests": [
+    {
+      "quest_id": "GOV-SQ1",
+      "title": "Govern the Ungovernable",
+      "description": "Stand up a Flex Gateway (local mode, Docker) in front of any non-Mule API (a tiny Express/json-server app). Register it, apply rate limiting + an auth policy from API Manager, and prove enforcement with curl. You now govern a non-Mule API with the same control plane — write 5 lines on when you'd choose this over a Mule proxy.",
+      "xp": 200
+    },
+    {
+      "quest_id": "GOV-SQ2",
+      "title": "The Conformance Crusade",
+      "description": "Author a custom governance ruleset with 3 org rules (security scheme mandatory, version in path, contact info present), apply it to your Exchange specs, and produce a conformance report. Fix violations until 100%.",
+      "xp": 150
+    }
+  ],
+  "boss": {
+    "boss_id": "BOSS-08",
+    "title": "The Governance Lord",
+    "intro": "The Governance Lord rules a federation of a thousand APIs. Unpaired apps, unordered policies, and tierless consumers are exiled from his realm. Show him an API operated as a product.",
+    "mcq": [
+      {
+        "id": "BOSS-08-q1",
+        "q": "A new API must enforce: JWT auth, 100 req/min per consumer by tier, burst protection for the backend. Correct policy set + order?",
+        "options": [
+          "Spike control → SLA rate limit → JWT",
+          "JWT validation → SLA-based rate limiting (with Client ID context) → Spike Control",
+          "SLA rate limit → JWT → spike",
+          "JWT and nothing else"
+        ],
+        "answer": 1,
+        "explanation": "Authenticate first, meter per consumer second, smooth aggregate bursts last before the backend."
+      },
+      {
+        "id": "BOSS-08-q2",
+        "q": "Ops reports the API 'Active' but a JUST-APPLIED policy isn't enforcing on one of three on-prem runtimes (its network to the control plane is flaky). Explanation?",
+        "options": [
+          "Policies need app restart",
+          "That runtime hasn't downloaded the latest policy set; it enforces last-known policies until connectivity restores",
+          "Policies don't work on-prem",
+          "The API ID changed"
+        ],
+        "answer": 1,
+        "explanation": "Policy distribution is pull-based; disconnected gateways keep prior state — eventual consistency of governance."
+      },
+      {
+        "id": "BOSS-08-q3",
+        "q": "Security demands EVERY API in the production environment logs requests and enforces TLS-version minimums — including future APIs, no exceptions, no per-team opt-out. Mechanism?",
+        "options": [
+          "Email the teams a checklist",
+          "Automated Policies at the environment level",
+          "A shared RAML trait",
+          "Governance ruleset"
+        ],
+        "answer": 1,
+        "explanation": "Automated policies apply to all (current and future) APIs in scope and can't be removed by API owners."
+      },
+      {
+        "id": "BOSS-08-q4",
+        "q": "An internal team bypasses the gateway by calling the implementation's CloudHub URL directly. Architectural remediations? (best answer)",
+        "options": [
+          "Rename the app",
+          "Lock the implementation to accept only gateway-originated traffic (VPC/private space + LB rules, or mTLS between gateway and impl), making the managed endpoint the only path",
+          "Ask them to stop",
+          "Double the rate limits"
+        ],
+        "answer": 1,
+        "explanation": "Governance is only real if the gateway is unavoidable — network/identity controls close the side door."
+      },
+      {
+        "id": "BOSS-08-q5",
+        "q": "Which data source answers 'which consumer caused yesterday's 429 storm on orders-api v2'?",
+        "options": [
+          "Runtime Manager CPU graphs",
+          "API Analytics filtered by API instance, client application, and policy-violation outcome",
+          "Visualizer",
+          "Exchange reviews"
+        ],
+        "answer": 1,
+        "explanation": "Per-contract attribution lives in API Analytics — the operational payoff of client ID enforcement."
+      }
+    ],
+    "scenario": {
+      "prompt": "BUILD TASK — Rule the Realm:\n\nProductize one API end-to-end:\n1. Spec in Exchange with governance ruleset conformance at 100%.\n2. API instance with autodiscovery pairing (prove Active status + enforcement).\n3. Policies in correct order: JWT (or Client ID) → SLA rate limiting (2 tiers) → Spike Control; document the order rationale in the README.\n4. Two consumer apps on different tiers with contracts; load-test showing differentiated 429s + X-RateLimit headers.\n5. One API Manager alert (policy violations) + one Runtime Manager alert (CPU) firing into your inbox.\n6. Analytics screenshot-equivalent: requests by client app for the test window.",
+      "checklist": [
+        "Conformance report clean; spec is the single source of truth",
+        "Silent-non-enforcement failure mode tested (break pairing creds, observe, restore)",
+        "Policy ordering correct and justified in writing",
+        "Tier differentiation proven under load with captured 429 evidence",
+        "Both alert types received; analytics attribute traffic per consumer correctly"
+      ]
+    }
+  }
+}

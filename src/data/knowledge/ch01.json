@@ -1,0 +1,489 @@
+{
+  "chapter": 1,
+  "title": "The Awakening",
+  "concepts": [
+    {
+      "concept_id": "AWK-001",
+      "title": "Anypoint Platform: Control Plane vs Runtime Plane",
+      "card": {
+        "what": "Anypoint Platform splits into two planes. The control plane (Anypoint Exchange, API Manager, Runtime Manager, Access Management, Design Center) is where you design, deploy, manage and govern. The runtime plane is where Mule apps actually execute: CloudHub 1.0/2.0, Runtime Fabric, customer-hosted (on-prem) runtimes, and Flex Gateway for non-Mule APIs.",
+        "how": "The control plane is MuleSoft-hosted (US, EU, or gov clouds) and communicates with runtimes over an outbound, mutually-authenticated connection initiated by the runtime plane. Runtime Manager is the bridge: it deploys apps, streams logs/metrics, and pushes policies. A single control plane can manage runtimes in any plane combination — CloudHub workers, RTF clusters on EKS/AKS, and standalone Mule runtimes registered via the Runtime Manager agent.",
+        "exam_traps": [
+          "Agent communication is OUTBOUND from the runtime plane to the control plane — you never open inbound firewall ports for management traffic. Exams love asking which ports to open 'inbound' for on-prem management: none.",
+          "Anypoint MQ and Object Store v2 are control-plane-region-bound services — an EU control plane org cannot use US Anypoint MQ queues transparently.",
+          "API Manager applies policies; Runtime Manager deploys apps. Questions deliberately swap their responsibilities.",
+          "Design Center creates API specs AND flow designer apps, but Flow Designer is deprecated for new development — Studio/Anypoint Code Builder are the build tools."
+        ],
+        "hands_on": "Log into Anypoint Platform (trial org is fine). Locate: Exchange, Design Center, API Manager, Runtime Manager, Access Management. In Access Management, find your org ID and the business group structure. In Runtime Manager, note the deployment target options available to your org (CloudHub, CloudHub 2.0, etc.).",
+        "deep_dive": "Business groups form a hierarchy under the root org; environments (Design/Sandbox/Production) exist per business group. Permissions are scoped (org, business group, environment) and assigned via teams or directly. Client IDs and secrets exist per environment AND per business group — the environment client credentials are what apps use for autodiscovery pairing with API Manager.\n\nControl plane regions matter for compliance: US control plane stores metadata in the US even if your runtimes are in the EU. The EU control plane is a fully separate instance with its own URLs (eu1.anypoint.mulesoft.com). MFA and identity federation (SAML/OIDC) are configured in Access Management; an exam scenario will ask how to integrate corporate SSO — answer: external identity provider in Access Management, not 'create users manually'.\n\nFlex Gateway (running in connected mode) registers with the same control plane and lets API Manager govern non-Mule services (e.g., a Node.js API) — important MCIA awareness."
+      },
+      "quiz": [
+        {
+          "id": "AWK-001-q1",
+          "q": "Your security team asks which inbound firewall ports must be opened so Runtime Manager can manage an on-prem Mule runtime. What is the correct answer?",
+          "options": [
+            "443 inbound from MuleSoft IP ranges",
+            "None — the runtime initiates an outbound connection to the control plane",
+            "8081 and 8082 inbound",
+            "1099 (JMX) inbound from the control plane"
+          ],
+          "answer": 1,
+          "explanation": "The Runtime Manager agent opens an outbound (mutually authenticated, WebSocket/AMQP over TLS) connection to the control plane. No inbound management ports are required."
+        },
+        {
+          "id": "AWK-001-q2",
+          "q": "Which component is responsible for applying rate-limiting policies to a deployed Mule API?",
+          "options": [
+            "Runtime Manager",
+            "Exchange",
+            "API Manager",
+            "Access Management"
+          ],
+          "answer": 2,
+          "explanation": "API Manager owns API instances, policies, SLA tiers, and contracts. Runtime Manager owns deployment, scaling, logs and alerts for the app itself."
+        },
+        {
+          "id": "AWK-001-q3",
+          "q": "A global org uses the EU control plane for GDPR reasons. Which statement is TRUE?",
+          "options": [
+            "Their Mule apps can only be deployed to EU CloudHub regions",
+            "The EU control plane is a separate instance with its own URL, and platform metadata stays in the EU",
+            "They must self-host the control plane",
+            "Exchange assets are automatically replicated from the US control plane"
+          ],
+          "answer": 1,
+          "explanation": "The EU control plane (eu1.anypoint.mulesoft.com) is fully separate — separate accounts, separate Exchange. Runtimes can still deploy to multiple regions, but the management metadata stays in the EU."
+        },
+        {
+          "id": "AWK-001-q4",
+          "q": "Which of these runs in the RUNTIME plane?",
+          "options": [
+            "Design Center",
+            "Flex Gateway",
+            "Exchange",
+            "Access Management"
+          ],
+          "answer": 1,
+          "explanation": "Flex Gateway executes traffic enforcement next to your services — runtime plane. The others are control-plane management tools."
+        }
+      ],
+      "difficulty": "beginner",
+      "prerequisites": [],
+      "ai_tags": ["platform", "control-plane", "runtime-plane", "architecture"]
+    },
+    {
+      "concept_id": "AWK-002",
+      "title": "The Mule 4 Event Model",
+      "card": {
+        "what": "Everything moving through a Mule 4 flow is a Mule Event: a Mule Message (payload + attributes) plus variables. Attributes are metadata from the transport (HTTP headers, query params, file metadata); payload is the body; variables are flow-scoped data you set yourself.",
+        "how": "An event source (listener) creates the event. Each processor receives the event, may produce a new immutable message, and passes it on. Payload and attributes are REPLACED by operations (an HTTP Request swaps both payload and attributes with the response), while variables persist across the whole flow — including into flow-refs and (unlike Mule 3 flowVars semantics) into child flows and back. Access via DataWeave bindings: payload, attributes, vars.myVar, error, and message.",
+        "exam_traps": [
+          "After an HTTP Request operation, the original ATTRIBUTES are gone — replaced by the HTTP response attributes (statusCode, headers). Exams test whether you know attributes get overwritten by every operation, not just payload.",
+          "Variables survive flow-ref into a child flow AND survive returning — but they do NOT cross the boundary of an async scope back to the parent, and they do NOT exist in a new event created by VM/JMS publish.",
+          "Mule 4 has no inboundProperties/outboundProperties/sessionVars — those are Mule 3. Any answer option mentioning them in Mule 4 context is wrong.",
+          "attributes.queryParams and attributes.uriParams are maps on the HTTP listener attributes — query params are NOT in the payload."
+        ],
+        "hands_on": "Build a flow: HTTP Listener (/event-lab) → Set Variable (vars.original = attributes.queryParams.name) → HTTP Request to a public API → Logger printing payload, attributes.statusCode, and vars.original. Hit it with ?name=test and confirm in the logs which parts of the event survived the HTTP Request and which were replaced.",
+        "deep_dive": "The Mule Message is immutable — processors don't mutate, they produce new messages. This matters for Scatter-Gather (each route gets its own copy of the event) and for async scopes.\n\nTyped values: every value carries a MIME type and encoding (DataWeave is type-aware). output application/json in a Transform isn't cosmetic — it sets message.payload's media type, which downstream connectors honor (e.g., HTTP Request Content-Type).\n\nStreaming: payloads from HTTP/File/DB are streams by default. A repeatable stream (file-stored or in-memory buffer) lets multiple processors read the payload; non-repeatable streams can be consumed exactly once — the classic 'why is my payload empty after the logger' production bug. Exam scenarios about 'payload consumed by first component' are about non-repeatable streams.\n\ntarget/targetValue on operations: instead of overwriting the payload, any operation can write its result into a variable (target=\"myVar\", targetValue=\"#[payload]\") — the idiomatic Mule 4 way to preserve the current payload across an enrichment call (replaces Mule 3 message enricher)."
+      },
+      "quiz": [
+        {
+          "id": "AWK-002-q1",
+          "q": "A flow does: HTTP Listener → Set Variable (vars.id) → HTTP Request → Logger. Which data is available at the Logger?",
+          "options": [
+            "Original listener attributes, original payload, vars.id",
+            "HTTP response payload and response attributes; vars.id is gone",
+            "HTTP response payload and response attributes; vars.id survives",
+            "Original payload, response attributes, vars.id"
+          ],
+          "answer": 2,
+          "explanation": "Operations replace payload AND attributes with their result; variables persist through the flow."
+        },
+        {
+          "id": "AWK-002-q2",
+          "q": "You need to call an enrichment API but keep the current payload intact. The idiomatic Mule 4 approach is:",
+          "options": [
+            "Wrap the call in an enricher scope",
+            "Copy payload to a session variable first",
+            "Set target=\"enrichment\" on the HTTP Request operation",
+            "Use a Scatter-Gather with one route"
+          ],
+          "answer": 2,
+          "explanation": "The target attribute stores the operation result in a variable instead of the payload. Enricher scopes and session variables are Mule 3 constructs."
+        },
+        {
+          "id": "AWK-002-q3",
+          "q": "Where do HTTP query parameters arrive in a Mule 4 event?",
+          "options": [
+            "payload.queryParams",
+            "attributes.queryParams",
+            "vars.queryParams",
+            "inboundProperties['http.query.params']"
+          ],
+          "answer": 1,
+          "explanation": "Transport metadata lives in attributes. inboundProperties is Mule 3."
+        },
+        {
+          "id": "AWK-002-q4",
+          "q": "A logger mid-flow logs the payload; the next component receives an empty body. Most likely cause?",
+          "options": [
+            "The logger cleared the payload",
+            "A non-repeatable stream was consumed by the logger",
+            "Variables were overwritten",
+            "The flow is missing an object-to-string transformer"
+          ],
+          "answer": 1,
+          "explanation": "Non-repeatable streams can be read once. Enable repeatable streaming or avoid consuming the stream early."
+        }
+      ],
+      "difficulty": "beginner",
+      "prerequisites": ["AWK-001"],
+      "ai_tags": ["event-model", "payload", "attributes", "variables", "streaming"]
+    },
+    {
+      "concept_id": "AWK-003",
+      "title": "Anypoint Studio & Mule Project Anatomy",
+      "card": {
+        "what": "Anypoint Studio is the Eclipse-based IDE for Mule 4 (Anypoint Code Builder is the VS Code-based successor). A Mule project is a Maven project: mule-artifact.json describes the app, pom.xml manages dependencies/connectors, src/main/mule holds the XML configs, src/main/resources holds properties/DW files.",
+        "how": "Studio edits Mule configuration XML through a visual canvas + XML view. Connectors are Maven dependencies pulled from Exchange/Maven repos with <classifier>mule-plugin</classifier>. Multiple XML config files in one app share a single registry — global elements (configurations) defined in one file are usable in all. mule-artifact.json declares minMuleVersion and secureProperties. The embedded runtime lets you run/debug locally with breakpoints in the Mule Debugger.",
+        "exam_traps": [
+          "Connector dependencies use the classifier 'mule-plugin' in the pom — exam options that say 'jar' or 'mule-app' for a connector dependency are wrong.",
+          "Global elements are app-wide, not file-scoped: defining an HTTP Listener config in global.xml makes it available to flows in any other config file of the same app.",
+          "secureProperties in mule-artifact.json defines WHICH property keys are masked in Runtime Manager — it does not encrypt them. Encryption is the Secure Properties module with the mule-key.",
+          "The Mule Debugger attaches to the local embedded runtime on port 6666 by default — and is for DEBUGGING, not a performance profiler."
+        ],
+        "hands_on": "Create a new Mule project in Studio. Add HTTP connector via 'Manage Modules' / Exchange. Split the app: global.xml for configurations, api.xml for flows. Define the HTTP Listener config in global.xml, reference it from a flow in api.xml. Open pom.xml and find the mule-plugin classifier on the HTTP connector dependency. Run with the debugger, set a breakpoint, inspect the event.",
+        "deep_dive": "mule-artifact.json keys worth knowing: minMuleVersion (runtime compatibility floor), secureProperties (masking list), redeploymentEnabled, configs (explicit config file list). The exportedPackages/exportedResources matter only for domains and shared libraries.\n\nMule domains (on-prem/standalone only): a domain project shares connectors/configs (e.g., one HTTP listener config + port) across multiple apps on the same runtime — NOT supported on CloudHub (each CloudHub worker runs one app). Classic MCIA scenario: 'multiple APIs must share one HTTPS port on a standalone runtime' → domain project.\n\nMaven structure: parent POMs centralize dependency versions; the mule-maven-plugin drives packaging (mule-application) and deployment (cloudhub2Deployment, runtimeFabricDeployment, armDeployment configs). Studio's 'Export as deployable archive' produces the same artifact as mvn clean package -DskipTests.\n\nAnypoint Code Builder (ACB) is the strategic IDE: VS Code extension, same Mule XML, plus AI-assisted flow generation — know it exists and that Studio remains GA for Mule 4 dev."
+      },
+      "quiz": [
+        {
+          "id": "AWK-003-q1",
+          "q": "Which classifier does a connector dependency carry in a Mule 4 pom.xml?",
+          "options": ["mule-app", "mule-plugin", "connector", "jar"],
+          "answer": 1,
+          "explanation": "Connectors and modules are packaged as mule-plugin artifacts."
+        },
+        {
+          "id": "AWK-003-q2",
+          "q": "Two apps on the same standalone Mule runtime must share a single HTTPS listener port. What do you use?",
+          "options": [
+            "A shared global.xml copied into both apps",
+            "A Mule domain project with the shared HTTP listener config",
+            "CloudHub dedicated load balancer",
+            "Two listeners with SO_REUSEPORT"
+          ],
+          "answer": 1,
+          "explanation": "Domains share resources (like an HTTP listener config/port) across apps on the same on-prem/standalone runtime. Not available on CloudHub."
+        },
+        {
+          "id": "AWK-003-q3",
+          "q": "Listing a property key under secureProperties in mule-artifact.json causes it to be:",
+          "options": [
+            "Encrypted at rest automatically",
+            "Masked (hidden) in Runtime Manager UI and APIs",
+            "Available only in the production environment",
+            "Resolved from Anypoint Secrets Manager"
+          ],
+          "answer": 1,
+          "explanation": "secureProperties only masks values in the management UI. Encryption requires the Secure Configuration Properties module (or Secrets Manager / CloudHub safely-hidden properties)."
+        },
+        {
+          "id": "AWK-003-q4",
+          "q": "A global element (e.g., Database Config) defined in dbconfig.xml of your app is:",
+          "options": [
+            "Visible only to flows in dbconfig.xml",
+            "Visible to all flows in every config file of the same application",
+            "Visible to all apps on the same runtime",
+            "Visible only after importing it in each file"
+          ],
+          "answer": 1,
+          "explanation": "All config files of an app share one registry. Cross-app sharing needs a domain (standalone only)."
+        }
+      ],
+      "difficulty": "beginner",
+      "prerequisites": ["AWK-001"],
+      "ai_tags": ["studio", "maven", "project-structure", "domains"]
+    },
+    {
+      "concept_id": "AWK-004",
+      "title": "Flow Anatomy: Flows, Subflows & Private Flows",
+      "card": {
+        "what": "A flow is the unit of execution: optional source + processors + error handler. A private flow is a flow with no source, called via flow-ref, with its OWN error handling and processing strategy. A subflow has no source, no error handler — it inlines into the caller and inherits the caller's context entirely.",
+        "how": "flow-ref invokes flows/subflows synchronously — the event goes in, the result event comes back, variables persist both ways. Each flow has an implicit initial state (started/stopped) and its own error handler chain; a subflow's errors propagate straight to the caller's handler. maxConcurrency on a flow throttles parallel executions. Flows with sources (listeners) start consuming on deploy when started.",
+        "exam_traps": [
+          "Subflows CANNOT have error handlers or sources — any option configuring on-error inside a subflow is invalid. Errors raised in a subflow are handled by the CALLING flow's error handler.",
+          "flow-ref is synchronous. 'Fire and forget' requires an Async scope or VM/JMS queue — flow-ref alone never detaches.",
+          "A private flow's error handler runs for errors inside it; if it handles via on-error-continue, the CALLER sees a successful response — a favorite trick scenario.",
+          "Stopped flows still deploy successfully; their listeners just don't trigger. Questions may imply a stopped flow fails deployment — false."
+        ],
+        "hands_on": "Build: main flow (HTTP Listener) → flow-ref to a subflow that throws (e.g., raise error APP:DEMO) and observe the main flow's error handler catching it. Then convert the subflow to a private flow with on-error-continue inside, and observe the caller now receiving a 200 with the handler's payload. This difference is the single most-tested flow behavior.",
+        "deep_dive": "Execution engine: Mule 4 uses a reactive, non-blocking engine with three thread pools merged into one (UBER) since 4.3 — CPU_LITE, CPU_INTENSIVE, BLOCKING_IO are scheduling hints from each component. You don't pick threads; the runtime self-tunes. maxConcurrency replaces Mule 3 threading profiles.\n\nback-pressure: when maxConcurrency is reached, sources are signaled — HTTP returns 503 (or queues per source config), pollers skip. Know that back-pressure exists and where it surfaces.\n\nProcessing chain semantics: each processor is wrapped, results flow via the event. on-error-propagate re-throws after executing its processors (HTTP source maps to 500 by default); on-error-continue swallows and continues as success (HTTP maps to 200). At source level these map to the success/error response builders of the listener.\n\nFlow design guidance (MCIA flavor): keep flows small and single-purpose; private flows for reusable units needing their own error strategy; subflows for pure processing reuse where caller context is desired; maxConcurrency to protect fragile downstreams."
+      },
+      "quiz": [
+        {
+          "id": "AWK-004-q1",
+          "q": "An error is raised inside a subflow invoked via flow-ref. Where is it handled?",
+          "options": [
+            "The subflow's own error handler",
+            "The calling flow's error handler",
+            "The default error handler only",
+            "It cannot be handled"
+          ],
+          "answer": 1,
+          "explanation": "Subflows have no error handlers — errors propagate to the caller."
+        },
+        {
+          "id": "AWK-004-q2",
+          "q": "A private flow called via flow-ref handles its error with on-error-continue. What does the calling flow observe?",
+          "options": [
+            "The error re-raised at the flow-ref",
+            "A successful result — execution continues normally after the flow-ref",
+            "A null payload and error object",
+            "The caller's error handler also executes"
+          ],
+          "answer": 1,
+          "explanation": "on-error-continue converts the error into a successful completion of that flow; the caller proceeds as if the flow-ref succeeded."
+        },
+        {
+          "id": "AWK-004-q3",
+          "q": "Which is TRUE about flow-ref?",
+          "options": [
+            "It executes the target flow asynchronously",
+            "It can only call subflows",
+            "It is synchronous, and variables set in the target flow are visible to the caller afterward",
+            "It creates a copy of the event; variable changes are discarded"
+          ],
+          "answer": 2,
+          "explanation": "flow-ref is a synchronous in-process call sharing the same event context — vars set in the child persist back in the parent."
+        },
+        {
+          "id": "AWK-004-q4",
+          "q": "What does maxConcurrency=1 on a flow guarantee?",
+          "options": [
+            "The flow uses one thread for all processors",
+            "Only one event executes in the flow at a time; additional events experience back-pressure",
+            "Events are processed in strict arrival order across a cluster",
+            "The flow becomes transactional"
+          ],
+          "answer": 1,
+          "explanation": "maxConcurrency throttles concurrent executions on that runtime instance. It does NOT guarantee cluster-wide ordering."
+        }
+      ],
+      "difficulty": "intermediate",
+      "prerequisites": ["AWK-002"],
+      "ai_tags": ["flows", "subflows", "flow-ref", "error-propagation", "concurrency"]
+    },
+    {
+      "concept_id": "AWK-005",
+      "title": "Expressions Everywhere: DataWeave as the Expression Language",
+      "card": {
+        "what": "In Mule 4, DataWeave 2.0 is THE expression language — every #[...] expression in any component attribute is DW. The same language powers Transform Message components, inline expressions, and dynamic configuration values.",
+        "how": "Inside #[...] you have full DW: bindings (payload, attributes, vars, error, message, flow, app, p('prop')), operators, and functions. Component attributes accept expressions where the UI shows the fx toggle. p('key') reads configuration properties inside expressions; ${key} is property placeholder syntax for static config attributes (resolved at startup, not per-event).",
+        "exam_traps": [
+          "${prop} vs p('prop'): ${} is static property placeholder resolution in XML attributes at startup; p() is a DW function evaluated per-expression. Using ${} inside a DW script body doesn't work the way candidates expect — use p().",
+          "Logger message='#[payload]' on a binary/stream payload logs the stream reference (and may consume it) — exams test 'why does my logger show org.mule.weave...' or break streaming.",
+          "In Mule 4 you cannot use MEL — any answer containing #[message.inboundProperties...] or MEL syntax is Mule 3 bait.",
+          "error.description vs error.detailedDescription vs error.errorType — know that error.errorType has namespace and identifier (e.g., HTTP:NOT_FOUND)."
+        ],
+        "hands_on": "In a flow, set these and log them: #[attributes.headers['user-agent']], #[vars.x default 'fallback'], #[p('api.timeout')] (define api.timeout in a properties file loaded via configuration-properties), and a dynamic HTTP Request path: path='#[\"/orders/\" ++ (attributes.uriParams.id default \"0\")]'. Confirm startup vs runtime resolution by changing the property without redeploying (it won't change — startup-resolved).",
+        "deep_dive": "Bindings reference: payload, attributes, vars, message (typed message: payload+attributes), error (inside handlers: description, errorType, cause, errorMessage), flow.name, app.name, server (host info), authentication (security context), itemSequenceInfo, correlationId.\n\nProperty resolution order matters for deployment: deployment properties (Runtime Manager) override system properties (-D) override environment-specific files override default properties files. Secure properties integrate via the secure:: prefix from the Secure Configuration Properties module.\n\nDynamic vs static configuration: some connector fields are 'expressions supported' (evaluated per event) vs 'static only' (startup). Dynamic configs (e.g., an HTTP Request config with an expression-driven host) cause Mule to create a config instance per unique value — a known performance trap with unbounded cardinality.\n\noutput directive inside inline expressions defaults to application/java; a Set Payload with #[{a:1}] produces a java LinkedHashMap unless you use output application/json in a full Transform — relevant when the next component expects JSON bytes."
+      },
+      "quiz": [
+        {
+          "id": "AWK-005-q1",
+          "q": "What is the difference between ${api.host} and p('api.host') in a Mule 4 app?",
+          "options": [
+            "No difference",
+            "${} resolves once at startup in XML attributes; p() is a DataWeave function usable inside expressions",
+            "p() only works in Transform Message; ${} works everywhere",
+            "${} is Mule 3 syntax and invalid in Mule 4"
+          ],
+          "answer": 1,
+          "explanation": "${} is a static placeholder substituted when configuration loads; p() evaluates within DW expressions."
+        },
+        {
+          "id": "AWK-005-q2",
+          "q": "Inside an error handler, which expression yields 'HTTP:NOT_FOUND' style information?",
+          "options": ["error.description", "error.errorType", "error.cause.class", "error.statusCode"],
+          "answer": 1,
+          "explanation": "error.errorType holds namespace:identifier. description is the human message."
+        },
+        {
+          "id": "AWK-005-q3",
+          "q": "A Set Payload uses #[{id: 1}] with no output directive, and the result is sent to an HTTP Request expecting JSON. What happens?",
+          "options": [
+            "JSON is sent — DW defaults to JSON",
+            "A Java map is produced; serialization to JSON depends on the request's body/media-type handling — risky and implicit",
+            "A compile error occurs",
+            "The expression is rejected at deployment"
+          ],
+          "answer": 1,
+          "explanation": "Inline expressions default to application/java. Be explicit with output application/json in a Transform when the wire format matters."
+        }
+      ],
+      "difficulty": "intermediate",
+      "prerequisites": ["AWK-002"],
+      "ai_tags": ["dataweave", "expressions", "properties", "configuration"]
+    },
+    {
+      "concept_id": "AWK-006",
+      "title": "First Deployment: Properties, Environments & the App Lifecycle",
+      "card": {
+        "what": "A Mule app moves Design → Build → Deploy → Manage. Configuration properties externalize environment differences (hosts, credentials, timeouts) so ONE artifact deploys to every environment — the cardinal rule of Mule packaging.",
+        "how": "Use configuration-properties files per environment (e.g., config-dev.yaml, config-prod.yaml) selected by a mule.env system/deployment property: file=\"config-${mule.env}.yaml\". Deploy via Studio (dev only), Runtime Manager UI, mule-maven-plugin, or Anypoint CLI. Runtime Manager deployment properties override packaged values, letting ops set env-specifics without rebuilds.",
+        "exam_traps": [
+          "Rebuilding the JAR per environment is an anti-pattern and a wrong answer — the correct pattern is one artifact + externalized properties.",
+          "Deployment properties set in Runtime Manager override properties files inside the app — precedence questions are common.",
+          "CloudHub reserved properties like 'mule.env' must be set as deployment properties, and CloudHub 'safely hidden' properties are write-only in the UI but available to the app — different from secureProperties masking.",
+          "Studio deploy ('Run As → Mule Application') uses the EMBEDDED runtime — it is not a CloudHub deployment."
+        ],
+        "hands_on": "Create config-dev.yaml and config-prod.yaml with different http.port values. Wire configuration-properties file=\"config-${mule.env}.yaml\" and run locally with -M-Dmule.env=dev (Studio run configuration VM args). Verify switching mule.env flips the port without code change. Then package: mvn clean package and inspect the JAR's structure under target/.",
+        "deep_dive": "Property precedence (highest first): deployment properties (Runtime Manager/CloudHub) → system properties (-D...) → environment variables (via ${env.VAR} style references in newer runtimes / configuration) → app property files → defaults. Secure Configuration Properties module decrypts AES/Blowfish-encrypted values at startup using mule.key passed as a system/deployment property — the key itself must NOT live in the repo.\n\nApp lifecycle in Runtime Manager: deploy (upload artifact / pick from Exchange), start/stop/restart, update (zero-downtime on CloudHub 2.0 with rolling updates when replicas > 1), delete. Logs are streamed to Runtime Manager (CloudHub retains ~30 days / 100MB per worker tier caveats) and can be forwarded to external systems (log4j2 appenders — Splunk/ELK) which is the production-grade answer for log retention questions.\n\nVersioning discipline: semantic versioning on the app artifact, API spec versioned in Exchange separately (major version in URL per API-led convention). The same JAR promoted dev→test→prod via CI/CD, never rebuilt — this exact phrase shows up in MCD L2/MCIA scenarios."
+      },
+      "quiz": [
+        {
+          "id": "AWK-006-q1",
+          "q": "Best practice for deploying the same Mule app to dev, test, and prod is:",
+          "options": [
+            "Three Maven profiles producing three JARs",
+            "One artifact + externalized per-environment properties selected by mule.env",
+            "Three branches, one per environment",
+            "Hardcode prod values, override locally for dev"
+          ],
+          "answer": 1,
+          "explanation": "Build once, deploy everywhere. Environment differences belong in externalized configuration."
+        },
+        {
+          "id": "AWK-006-q2",
+          "q": "A property 'db.password' is defined in the app's YAML and also as a Runtime Manager deployment property with a different value. Which wins at runtime?",
+          "options": [
+            "The YAML value",
+            "The deployment property",
+            "Whichever loaded last alphabetically",
+            "Deployment fails with a conflict"
+          ],
+          "answer": 1,
+          "explanation": "Deployment properties have the highest precedence, by design, so ops can override without rebuilds."
+        },
+        {
+          "id": "AWK-006-q3",
+          "q": "Where should the encryption key for Secure Configuration Properties live?",
+          "options": [
+            "In the encrypted YAML itself",
+            "In mule-artifact.json",
+            "Passed as a system/deployment property (e.g., mule.key) outside source control",
+            "In a constant in a DW file"
+          ],
+          "answer": 2,
+          "explanation": "The key is supplied at deploy/run time and never committed. Otherwise the encryption is decorative."
+        }
+      ],
+      "difficulty": "intermediate",
+      "prerequisites": ["AWK-003"],
+      "ai_tags": ["deployment", "properties", "environments", "lifecycle"]
+    }
+  ],
+  "side_quests": [
+    {
+      "quest_id": "AWK-SQ1",
+      "title": "The Echo Gateway",
+      "description": "Build and run locally a complete 'echo+' API: HTTP Listener on /echo that returns JSON {method, path, query, headers, receivedAt} built purely from attributes via one Transform. Add a /health endpoint returning build info from a properties file. Bonus: make the port environment-driven and prove it by running with two different mule.env values.",
+      "xp": 150
+    },
+    {
+      "quest_id": "AWK-SQ2",
+      "title": "Trial by Telemetry",
+      "description": "Deploy any app to CloudHub (trial org) via Runtime Manager. Capture: worker logs in RM, a deployment property override in action, and app restart behavior. Document the exact property precedence you observed in three sentences.",
+      "xp": 200
+    }
+  ],
+  "boss": {
+    "boss_id": "BOSS-01",
+    "title": "The Gatekeeper of the Runtime",
+    "intro": "The Gatekeeper guards the door between those who click around Studio and those who understand what the runtime actually does with an event. Answer its riddles of planes, events, and flows — then prove it with a build.",
+    "mcq": [
+      {
+        "id": "BOSS-01-q1",
+        "q": "An on-prem runtime managed by the US control plane loses internet connectivity for an hour. What happens to in-flight HTTP traffic served by the app?",
+        "options": [
+          "All requests fail — the control plane validates each request",
+          "Traffic continues to be served normally; only management/monitoring is degraded",
+          "The app stops within 60 seconds",
+          "Policies are removed until reconnection"
+        ],
+        "answer": 1,
+        "explanation": "The runtime plane is autonomous for traffic. Control-plane loss affects management, deployment, and metrics — not request processing (already-applied policies keep enforcing)."
+      },
+      {
+        "id": "BOSS-01-q2",
+        "q": "Flow A (HTTP Listener) sets vars.token, then flow-refs private Flow B, which calls an HTTP Request and raises HTTP:CONNECTIVITY handled inside Flow B by on-error-propagate. What does Flow A's error handler see?",
+        "options": [
+          "Nothing — Flow B handled it",
+          "The HTTP:CONNECTIVITY error, with vars.token still available",
+          "A MULE:UNKNOWN error without variables",
+          "The error, but vars.token is cleared"
+        ],
+        "answer": 1,
+        "explanation": "on-error-propagate re-raises to the caller; variables persist across flow-ref boundaries including into error handling."
+      },
+      {
+        "id": "BOSS-01-q3",
+        "q": "Which combination is IMPOSSIBLE in Mule 4?",
+        "options": [
+          "A flow with no source invoked by flow-ref",
+          "A subflow containing a Try scope with its own error handlers",
+          "A subflow with an on-error-continue handler attached directly to the subflow",
+          "A private flow with maxConcurrency"
+        ],
+        "answer": 2,
+        "explanation": "Subflows can CONTAIN Try scopes (which have handlers), but cannot have flow-level error handlers themselves."
+      },
+      {
+        "id": "BOSS-01-q4",
+        "q": "After an HTTP Request with target=\"resp\", what holds the HTTP response status code?",
+        "options": [
+          "attributes.statusCode",
+          "vars.resp.statusCode",
+          "vars.resp.attributes.statusCode — when targetValue is message; with default targetValue (#[payload]) the status is not captured",
+          "payload.statusCode"
+        ],
+        "answer": 2,
+        "explanation": "target stores targetValue (default #[payload]) into the var — payload only. To keep attributes you set targetValue=\"#[message]\", then vars.resp.attributes.statusCode. With target set, the flow's own payload/attributes remain the PRE-call values."
+      },
+      {
+        "id": "BOSS-01-q5",
+        "q": "Your team wants secrets masked in Runtime Manager AND encrypted in the repo. Correct combination?",
+        "options": [
+          "secureProperties only",
+          "Secure Configuration Properties module (encrypted YAML + mule.key at deploy time) + listing keys in secureProperties",
+          "CloudHub safely-hidden properties only",
+          "Base64-encode values in the YAML"
+        ],
+        "answer": 1,
+        "explanation": "Encryption-at-rest in git = Secure Config Properties; masking in RM UI = secureProperties list. They solve different problems and are used together."
+      },
+      {
+        "id": "BOSS-01-q6",
+        "q": "A flow's HTTP Listener receives bursts beyond maxConcurrency. Default back-pressure behavior?",
+        "options": [
+          "Requests queue indefinitely",
+          "Excess requests are rejected (503-style) per back-pressure strategy",
+          "The runtime spawns more workers",
+          "Events are silently dropped"
+        ],
+        "answer": 1,
+        "explanation": "When concurrency is saturated the source applies back-pressure; for HTTP that surfaces as rejections rather than unbounded queueing."
+      }
+    ],
+    "scenario": {
+      "prompt": "BUILD TASK — The Gatekeeper's Gauntlet:\n\nBuild a single Mule app with:\n1. global.xml holding all configurations (HTTP listener config, properties config with config-${mule.env}.yaml).\n2. A main flow on POST /gauntlet that: stores attributes.headers['x-trace'] in vars.trace, calls a private flow 'enrich' via flow-ref.\n3. 'enrich' calls any public API via HTTP Request with target=\"enrichment\" targetValue=\"#[message]\", then builds a JSON payload {trace: vars.trace, status: vars.enrichment.attributes.statusCode, data: vars.enrichment.payload}.\n4. An on-error-propagate in 'enrich' for HTTP:CONNECTIVITY, and an on-error-continue at the main flow returning {error: error.errorType.identifier} with HTTP 200.\n5. Run it twice with different mule.env values proving the port changes.",
+      "checklist": [
+        "Configurations live in global.xml and are referenced across files",
+        "vars.trace survives into the private flow and the final response",
+        "target/targetValue used so the pre-call payload was preserved",
+        "Killing the downstream API produces the on-error-continue 200 response with the errorType identifier",
+        "Port provably switches via mule.env without editing XML"
+      ]
+    }
+  }
+}

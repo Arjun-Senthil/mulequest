@@ -1,0 +1,364 @@
+{
+  "chapter": 4,
+  "title": "DataWeave Sage",
+  "concepts": [
+    {
+      "concept_id": "DW-001",
+      "title": "DataWeave Types, Selectors & Coercion",
+      "card": {
+        "what": "DataWeave 2.0 is a functional, strongly-typed transformation language. Core types: String, Number, Boolean, Date/Time family, Array, Object, Null, plus Binary, Regex, Range, Key. Selectors navigate structures; 'as' coerces between types.",
+        "how": "Selectors: .key (single value), .*key (all matching keys as array), ..key (descendant search), [n] (index, negatives from end), [\"key\"] (dynamic), .@attr (XML attributes), [?(condition)] (filter selector). Coercion: payload.date as Date {format: \"yyyy-MM-dd\"}, \"42\" as Number. Null-safe by design — selecting a missing key yields null, chainable without NPEs. The 'default' operator supplies fallbacks: payload.x default 0.",
+        "exam_traps": [
+          ".*items vs .items: on repeated XML elements, .items returns the FIRST match in some contexts while .*items returns ALL as an array — the multi-value selector is mandatory for repeated XML elements. Top XML trap.",
+          "Date formatting: 'as Date {format:...}' PARSES a string; 'as String {format:...}' FORMATS a date. Direction confusion is deliberately tested.",
+          "payload[0] on an Object fails — index selectors are for Arrays; objects need key selectors or pluck.",
+          "null default vs missing: 'default' applies when the expression is null OR missing; but an explicitly false/0/empty-string value is NOT null — default won't replace it."
+        ],
+        "hands_on": "Given an XML purchase order with repeated <item> elements and attributes, write transforms producing: all items as JSON array (payload.order.*item), the currency attribute (payload.order.@currency), every nested <sku> anywhere (payload..sku), and parse the order date string into a Date then reformat as dd/MM/yyyy.",
+        "deep_dive": "Type system: ===/~= distinguish strict vs coercing equality (\"1\" ~= 1 is true, \"1\" == 1 is false). Custom types via 'type OrderId = String {format-ish constraints via patterns in modules}'. Ranges (1 to 10), and the Key type explain why pluck's $$ is a Key, not a String — compare with ($$  as String).\n\nXML specifics: namespaces declared in the header (ns ord http://...) and used ord#order; repeated-element write-side requires {(items map {item: $})} dynamic-object syntax. CDATA, attributes (@(...)), and mixed content round out the XML mastery MCD L2 expects.\n\nMetadata-driven coercion: DW honors MIME types; reading a CSV gives Array<Object> with header keys; output application/csv with custom separator/quote options. Streaming-friendly: avoid [-1] or sizeOf on huge streamed inputs (forces full materialization)."
+      },
+      "quiz": [
+        {
+          "id": "DW-001-q1",
+          "q": "XML has three repeated <line> elements under <order>. Which selector reliably returns ALL of them?",
+          "options": ["payload.order.line", "payload.order.*line", "payload.order..line[0]", "payload.order['line!']"],
+          "answer": 1,
+          "explanation": "The multi-value selector .* collects all repeated elements; .line alone returns a single (first) match in DW 2."
+        },
+        {
+          "id": "DW-001-q2",
+          "q": "Which expression FORMATS a Date variable d as '25/12/2025'?",
+          "options": [
+            "d as Date {format: \"dd/MM/yyyy\"}",
+            "d as String {format: \"dd/MM/yyyy\"}",
+            "format(d, \"dd/MM/yyyy\")",
+            "d.format(\"dd/MM/yyyy\")"
+          ],
+          "answer": 1,
+          "explanation": "Date→String = formatting (as String); String→Date = parsing (as Date)."
+        },
+        {
+          "id": "DW-001-q3",
+          "q": "payload.discount is explicitly 0. What does payload.discount default 10 return?",
+          "options": ["10", "0", "null", "Type error"],
+          "answer": 1,
+          "explanation": "default replaces only null/missing. 0 is a real value."
+        }
+      ],
+      "difficulty": "intermediate",
+      "prerequisites": [],
+      "ai_tags": ["dataweave", "selectors", "types", "coercion", "xml"]
+    },
+    {
+      "concept_id": "DW-002",
+      "title": "map, filter, reduce & the $ Family",
+      "card": {
+        "what": "The functional core: map transforms each array element, filter keeps matching elements, reduce folds an array to one value. Anonymous parameters: $ (item), $$ (index) for map/filter; for reduce, $ is the item and $$ is the accumulator.",
+        "how": "payload map (item, index) -> {...} or shorthand payload map {id: $.id, pos: $$}. filter (item) -> condition. reduce ((item, acc = init) -> ...) — acc's default seeds it; without a seed, the FIRST element is the initial accumulator (and reduce on [] without seed returns null). Chain: payload filter ($.active) map {...} — chains left-to-right.",
+        "exam_traps": [
+          "In reduce, $$ is the ACCUMULATOR (not the index!) — exact opposite intuition from map's $$=index. The single most-failed DW question pattern.",
+          "reduce over an empty array WITHOUT an explicit seed returns null — with a seed, returns the seed.",
+          "map over an Object fails — objects need mapObject/pluck. 'map on object' compile errors are a fixture of exams.",
+          "Operator precedence in chains: payload filter ... map ... works, but mixing with ++ or 'default' often needs parentheses — exams show un-parenthesized ambiguous chains."
+        ],
+        "hands_on": "Given orders [{id, customer, total, status}]: (1) map to {ref: id, label: upper(customer)}, (2) filter total > 100 and status == 'PAID', (3) reduce to grand total with and without seed (observe [] edge case), (4) one chained expression: total revenue of PAID orders. Write each twice: shorthand $ syntax and named-parameter syntax.",
+        "deep_dive": "reduce patterns worth memorizing: sum = arr reduce ((n, acc = 0) -> acc + n); reverse = arr reduce ((x, acc = []) -> [x] ++ acc); toObject = arr reduce ((kv, acc = {}) -> acc ++ {(kv.k): kv.v}). Building an OBJECT in reduce requires the dynamic key parens {(expr): value}.\n\nflatMap = map + flatten for nested arrays (orders flatMap $.lines). distinctBy, orderBy, joinBy/splitBy round out daily-driver functions — orderBy with descending = orderBy ... then arr[-1 to 0] or -$.field trick for numerics.\n\nPerformance: prefer single-pass reduce over filter+map+sum triple passes for hot paths; but readability beats micro-optimization in most flows — know the trade-off language for architecture questions."
+      },
+      "quiz": [
+        {
+          "id": "DW-002-q1",
+          "q": "In '[1,2,3] reduce ((item, acc) -> item + acc)', what is acc on the first iteration?",
+          "options": ["0", "null", "1 (first element; iteration starts from the second)", "undefined — compile error"],
+          "answer": 2,
+          "explanation": "No seed → first element becomes the initial accumulator, folding starts at element 2."
+        },
+        {
+          "id": "DW-002-q2",
+          "q": "Inside 'payload map { idx: $$ }' versus 'payload reduce ((x, $$) -> ...)' — what does $$ mean in each?",
+          "options": [
+            "Index in both",
+            "Index in map; accumulator in reduce",
+            "Accumulator in both",
+            "Item in map; index in reduce"
+          ],
+          "answer": 1,
+          "explanation": "The notorious double-dollar duality. Burn it in."
+        },
+        {
+          "id": "DW-002-q3",
+          "q": "Which expression computes revenue of PAID orders in one chain?",
+          "options": [
+            "sum(payload filter ($.status == \"PAID\") map $.total)",
+            "payload map filter sum",
+            "sum(payload.total) filter PAID",
+            "payload reduce ($.total + $$) filter ($.status == \"PAID\")"
+          ],
+          "answer": 0,
+          "explanation": "filter → map to numbers → sum. Order of operations matters: filter before extracting."
+        }
+      ],
+      "difficulty": "intermediate",
+      "prerequisites": ["DW-001"],
+      "ai_tags": ["map", "filter", "reduce", "functional", "lambdas"]
+    },
+    {
+      "concept_id": "DW-003",
+      "title": "groupBy, pluck, mapObject & Object Surgery",
+      "card": {
+        "what": "Object-oriented transforms: groupBy partitions an array into an object keyed by a derived key; pluck converts an object into an array (the inverse of groupBy's shape); mapObject transforms keys/values in place; filterObject prunes entries.",
+        "how": "orders groupBy $.region → {West: [...], East: [...]}. obj pluck ((value, key, index) -> {k: key as String, v: value}) → array of entries. obj mapObject ((v, k) -> {(upper(k as String)): v}) — note dynamic key parens. To aggregate per group: orders groupBy $.region mapObject ((group, region) -> {(region): sum(group map $.total)}).",
+        "exam_traps": [
+          "groupBy returns an OBJECT, not an array — feeding it straight into map fails. Follow with pluck or mapObject. Guaranteed exam scenario.",
+          "pluck's key parameter is type Key — concatenating it to strings needs 'as String'.",
+          "Dynamic keys ALWAYS need parentheses: {(k): v}. Without parens you create a literal key named 'k'.",
+          "groupBy keys become STRINGS (object keys) — grouping by a number then comparing keys numerically requires coercion."
+        ],
+        "hands_on": "Sales records [{region, rep, amount}]: (1) total per region as {region: total} via groupBy + mapObject, (2) per-region top rep via groupBy + mapObject + orderBy, (3) flatten back to an array [{region, total}] with pluck, (4) invert a {code: name} lookup object with pluck + reduce (or mapObject trick).",
+        "deep_dive": "The groupBy→mapObject→pluck pipeline is THE reporting pattern: partition, aggregate, reshape. Multi-level grouping: groupBy a composite key ($.region ++ '|' ++ $.year) or nested groupBy with mapObject recursion.\n\nupdate/mask operators (DW 2.2+ update syntax: payload update { case .user.name -> upper($) }) give surgical in-place edits without rebuilding objects — modern, increasingly tested. dw::util::Values and dw::util::Tree modules for deep operations.\n\nKnow keysOf/valuesOf/namesOf/entriesOf (DW 2.4 entriesOf supersedes manual pluck for entry lists). Object duplication semantics: objects can hold REPEATED keys (XML heritage) — {a:1, a:2} is legal; .*a retrieves both; JSON output collapses/errors depending on writer settings (duplicateKeyAsArray)."
+      },
+      "quiz": [
+        {
+          "id": "DW-003-q1",
+          "q": "After 'orders groupBy $.status', you need an ARRAY of {status, count}. Correct continuation?",
+          "options": [
+            "... map {status: $.status, count: sizeOf($)}",
+            "... pluck ((group, status) -> {status: status as String, count: sizeOf(group)})",
+            "... filterObject (sizeOf($) > 0) map $",
+            "... reduce ((g, acc=[]) -> acc ++ g)"
+          ],
+          "answer": 1,
+          "explanation": "groupBy yields an Object; pluck walks its entries producing an array. map on an object is invalid."
+        },
+        {
+          "id": "DW-003-q2",
+          "q": "What does {(payload.fieldName): payload.value} do versus {payload.fieldName: payload.value}?",
+          "options": [
+            "Identical",
+            "First creates a dynamic key from the expression's value; second creates a literal key 'payload.fieldName'",
+            "Second is a compile error",
+            "First is XML-only syntax"
+          ],
+          "answer": 1,
+          "explanation": "Parens evaluate the key expression. (The second actually creates the literal selector path as key text in some writers/contexts — either way, not the dynamic key you wanted.)"
+        },
+        {
+          "id": "DW-003-q3",
+          "q": "Which pair are true inverses in shape (array of records ↔ keyed object of groups)?",
+          "options": ["map / filter", "groupBy / pluck", "reduce / flatten", "mapObject / filterObject"],
+          "answer": 1,
+          "explanation": "groupBy: array→object; pluck: object→array."
+        }
+      ],
+      "difficulty": "advanced",
+      "prerequisites": ["DW-002"],
+      "ai_tags": ["groupby", "pluck", "mapobject", "dynamic-keys", "aggregation"]
+    },
+    {
+      "concept_id": "DW-004",
+      "title": "Multi-Format: JSON ⇄ XML ⇄ CSV ⇄ Java",
+      "card": {
+        "what": "DataWeave reads and writes JSON, XML, CSV, Java, flat file/COBOL copybook, Avro, Excel and more — the same script logic with different input/output directives. Format quirks (XML single-root, CSV flatness, Java types) drive most real-world transform bugs.",
+        "how": "Header: %dw 2.0, output application/xml with writer properties (e.g., writeDeclaration, indent). XML requires exactly ONE root element; repeated elements via dynamic objects {(items map {item: $})}. CSV needs flat homogeneous rows (header=true/false, separator). Reader properties on input via the source connector metadata or read() function's third argument.",
+        "exam_traps": [
+          "JSON array → XML directly fails: XML needs a single root and named elements. You must wrap: {root: {(payload map {item: $})}} — the wrapping pattern is heavily tested.",
+          "CSV output of nested objects flattens badly/errors — flatten structure first. CSV header row is controlled by the 'header' writer property.",
+          "Java output gives LinkedHashMap/ArrayList by default; 'as Object {class: \"com.acme.Order\"}' binds to POJOs — needed for connectors expecting typed Java.",
+          "read()/write() functions let you parse/serialize INSIDE a script (e.g., a JSON string embedded in a field) — read(payload.body, \"application/json\")."
+        ],
+        "hands_on": "Build a three-step pipeline: read orders.csv (header=true) → transform to canonical JSON {orders: [...] } → produce BOTH a JSON response and an XML document with root <Orders><Order>... using the dynamic repeated-element pattern. Then embed: one CSV column contains a JSON string — parse it inline with read().",
+        "deep_dive": "Writer/reader property catalog worth knowing: JSON (writeAttributes for xml-ish roundtrips, skipNullOn=\"objects|arrays|everywhere\"), XML (inlineCloseOn, writeDeclaration, namespaces), CSV (separator, quoteValues, escape, header, ignoreEmptyLine). skipNullOn is a favorite: controls whether null fields are emitted or dropped.\n\nMIME-type driven behavior: setting output text/plain vs application/json changes quoting of a string payload — '\"hello\"' vs hello. Binary passthrough with application/octet-stream.\n\nLarge files: DW streaming mode (@StreamCapable, deferred=true on output) processes records without loading everything — pairs with File/SFTP streaming for GB-scale ETL; constraint: single forward pass (no random access, no sizeOf)."
+      },
+      "quiz": [
+        {
+          "id": "DW-004-q1",
+          "q": "Why does transforming JSON array payload [1,2,3] with output application/xml fail without restructuring?",
+          "options": [
+            "XML cannot represent numbers",
+            "XML requires a single named root element; a top-level array has neither",
+            "Arrays must be Base64-encoded in XML",
+            "The XML writer only accepts strings"
+          ],
+          "answer": 1,
+          "explanation": "Wrap in a root object and name the repeated elements."
+        },
+        {
+          "id": "DW-004-q2",
+          "q": "Which writer property drops null fields from JSON output objects?",
+          "options": ["ignoreNulls=true", "skipNullOn=\"objects\"", "writeNulls=false", "nullSafe=true"],
+          "answer": 1,
+          "explanation": "skipNullOn with objects/arrays/everywhere — exact property names get tested."
+        },
+        {
+          "id": "DW-004-q3",
+          "q": "A CSV field 'metadata' contains an embedded JSON string you must navigate. Correct approach?",
+          "options": [
+            "payload.metadata.key directly — DW auto-parses",
+            "read(payload.metadata, \"application/json\").key",
+            "payload.metadata as Object",
+            "splitBy(payload.metadata, \":\")"
+          ],
+          "answer": 1,
+          "explanation": "Embedded serialized content needs an explicit read() with its MIME type."
+        }
+      ],
+      "difficulty": "advanced",
+      "prerequisites": ["DW-001"],
+      "ai_tags": ["formats", "xml", "csv", "java", "streaming", "writer-properties"]
+    },
+    {
+      "concept_id": "DW-005",
+      "title": "Custom Functions, Modules & Advanced Constructs",
+      "card": {
+        "what": "fun defines reusable functions; var holds constants/lambdas; do {} creates scoped expressions; custom modules (.dwl files in src/main/resources) share logic across transforms; pattern matching (match/case) and tail recursion handle complex logic.",
+        "how": "Header section: fun toLabel(o) = upper(o.name) ++ '-' ++ (o.id as String). Modules: file modules/Orders.dwl with fun declarations → import modules::Orders or import toLabel from modules::Orders. match payload case is Array -> ... case obj if obj.type == 'X' -> ... else -> .... do { var x = ...; --- result } gives local scope anywhere an expression fits.",
+        "exam_traps": [
+          "Function overloading by type works (fun f(s: String) / fun f(n: Number)) — dispatch is by runtime type; exams test which overload fires.",
+          "Recursion is allowed but stack-bound (~255 depth without tail-call form) — unbounded recursion answers should raise red flags.",
+          "import syntax variants: 'import modules::Util' then Util::fn() vs 'import fn from modules::Util' then fn() vs 'import * from ...' — mixing forms wrongly is a compile error exams display.",
+          "The 'using' keyword is deprecated DW1 leftover — 'do {}' is the DW2 scoping construct."
+        ],
+        "hands_on": "Create modules/Format.dwl with: fun maskCard(s) keeping last 4 digits, fun toMoney(n, ccy='INR') formatting with 2 decimals, and an overloaded fun normalize(s: String)/normalize(n: Number). Import and use all three in a Transform. Add one match/case handling payload being either a single object or an array of objects (normalize both to array).",
+        "deep_dive": "The single-object-or-array normalization (match case is Array -> payload else -> [payload]) is a production staple for flaky upstream contracts.\n\nKey core modules: dw::core::Strings (camelize, pluralize, substringAfter), dw::core::Arrays (sumBy, countBy, divideBy, partition), dw::core::Objects (mergeWith, divideBy), dw::Runtime (try/orElse for in-script error capture, wait — never in prod paths), dw::Crypto (HMAC, hash for signing), dw::core::Binaries (toBase64/fromBase64). dw::Runtime::try returns {success, result|error} letting a transform survive malformed sub-structures — pair with default for resilient mapping.\n\nDW tests: the DataWeave Playground and dw CLI; MUnit asserts transforms via equalTo with files — treat transforms as unit-testable pure functions, which they are."
+      },
+      "quiz": [
+        {
+          "id": "DW-005-q1",
+          "q": "Where can shared DataWeave functions live for reuse across many Transform components in an app?",
+          "options": [
+            "Only inline in each transform header",
+            "A .dwl module under src/main/resources, imported via import modules::Name",
+            "In mule-artifact.json",
+            "In a Java static class only"
+          ],
+          "answer": 1,
+          "explanation": "Custom modules are plain .dwl files on the classpath, imported by path-as-namespace."
+        },
+        {
+          "id": "DW-005-q2",
+          "q": "Upstream sends either one order object or an array of orders. Canonical DW normalization?",
+          "options": [
+            "payload as Array",
+            "flatten([payload])",
+            "payload match { case is Array -> payload; else -> [payload] }",
+            "[payload] map $"
+          ],
+          "answer": 2,
+          "explanation": "match/case on the runtime type is the explicit, readable pattern. ('as Array' on an object fails; flatten([payload]) double-wraps arrays incorrectly... actually flatten handles it but obscures intent and fails on nested arrays.)"
+        },
+        {
+          "id": "DW-005-q3",
+          "q": "dw::Runtime::try(() -> payload.a.b.c as Number) returns success=false. What's the resilient continuation?",
+          "options": [
+            "It rethrows automatically",
+            "Inspect .success and use .result orElse a default — the transform continues",
+            "The flow's error handler fires",
+            "DW retries the expression"
+          ],
+          "answer": 1,
+          "explanation": "try captures the failure as data; orElse/default supply fallbacks without breaking the event."
+        }
+      ],
+      "difficulty": "advanced",
+      "prerequisites": ["DW-002", "DW-003"],
+      "ai_tags": ["functions", "modules", "pattern-matching", "recursion", "core-libraries"]
+    }
+  ],
+  "side_quests": [
+    {
+      "quest_id": "DW-SQ1",
+      "title": "The Transformation Gauntlet",
+      "description": "Classic interview-grade katas, all in the DW Playground: (1) invert {a:[1,2], b:[2,3]} into {1:[a], 2:[a,b], 3:[b]}; (2) given nested orders→lines, produce per-SKU totals sorted desc; (3) diff two arrays of objects by key (added/removed/changed); (4) build a CSV→hierarchical JSON converter grouping 3 levels deep. Save all four scripts to your snippets repo.",
+      "xp": 200
+    },
+    {
+      "quest_id": "DW-SQ2",
+      "title": "Module of Power",
+      "description": "Extract your five most-reused transforms from work into a proper DW module library with overloads + documentation comments, package it in a Mule project, and write MUnit tests asserting each function. This becomes a real asset for your team.",
+      "xp": 150
+    }
+  ],
+  "boss": {
+    "boss_id": "BOSS-04",
+    "title": "The Weave Lich",
+    "intro": "The Weave Lich speaks only in $$ and dynamic keys. Many enter its lair chaining maps; few leave with their accumulators intact.",
+    "mcq": [
+      {
+        "id": "BOSS-04-q1",
+        "q": "What does '[\"a\",\"b\",\"c\"] reduce ((s, acc = \"\") -> acc ++ s)' return, and what changes WITHOUT the seed?",
+        "options": [
+          "'abc' with seed; identical without",
+          "'abc' with seed; without seed also 'abc' (first element seeds, fold starts at 'b')",
+          "'cba' both ways",
+          "Error without seed"
+        ],
+        "answer": 1,
+        "explanation": "Both produce 'abc' here — but understanding WHY (seed vs first-element-seeding) is what the variants with non-commutative ops test."
+      },
+      {
+        "id": "BOSS-04-q2",
+        "q": "orders groupBy $.region — you need region names UPPERCASED as keys with order COUNTS as values. Correct expression?",
+        "options": [
+          "orders groupBy upper($.region) mapObject ((v, k) -> {(upper(k as String)): sizeOf(v)})",
+          "orders groupBy $.region mapObject ((group, region) -> {(upper(region as String)): sizeOf(group)})",
+          "orders map {(upper($.region)): sizeOf($)}",
+          "orders groupBy $.region pluck sizeOf($)"
+        ],
+        "answer": 1,
+        "explanation": "Group first, then reshape keys/aggregate values with mapObject. (Option A double-uppercases but also works — option B is the clean canonical form; exams reward the canonical.)"
+      },
+      {
+        "id": "BOSS-04-q3",
+        "q": "A transform outputs XML: <Orders><Order>...</Order><Order>...</Order></Orders> from a JSON array. Which body is correct?",
+        "options": [
+          "{Orders: payload map {Order: $}}",
+          "{Orders: {(payload map {Order: $})}}",
+          "{Orders: [payload map {Order: $}]}",
+          "Orders: payload"
+        ],
+        "answer": 1,
+        "explanation": "Repeated elements need the dynamic-object spread {(array-of-single-key-objects)} inside the root."
+      },
+      {
+        "id": "BOSS-04-q4",
+        "q": "Which statement about DW streaming is TRUE?",
+        "options": [
+          "sizeOf(payload) is free on a streamed input",
+          "Streaming allows one forward pass; random access or sizeOf forces full materialization",
+          "Streaming works only with JSON",
+          "deferred=true buffers everything in memory"
+        ],
+        "answer": 1,
+        "explanation": "Stream = single pass. Anything needing the whole dataset defeats it."
+      },
+      {
+        "id": "BOSS-04-q5",
+        "q": "fun f(x: String) = 'S' and fun f(x: Number) = 'N'. What does f(payload.id) return when payload is JSON {\"id\": \"42\"}?",
+        "options": ["'N' — JSON numbers auto-coerce", "'S' — the value is a String; dispatch is by runtime type", "Compile error", "'SN'"],
+        "answer": 1,
+        "explanation": "\"42\" is a String in JSON. Overload dispatch follows the actual runtime type — no implicit coercion."
+      },
+      {
+        "id": "BOSS-04-q6",
+        "q": "skipNullOn=\"everywhere\" is set, and payload is {a: null, b: [null, 1]}. JSON output?",
+        "options": [
+          "{\"b\":[1]}",
+          "{\"a\":null,\"b\":[null,1]}",
+          "{\"b\":[null,1]}",
+          "{}"
+        ],
+        "answer": 0,
+        "explanation": "everywhere = drop null object fields AND null array items."
+      }
+    ],
+    "scenario": {
+      "prompt": "BUILD TASK — The Lich's Ledger:\n\nInput: a CSV of transactions (txnId, customer, region, amount, currency, meta — where meta holds an embedded JSON string with {channel, device}).\n\nProduce in ONE Mule app with a shared DW module:\n1. JSON API response: per-region summary {region, txnCount, revenue, topCustomer, channels: {web: n, mobile: n}} — requires groupBy, nested aggregation, and read() on meta.\n2. XML export with root <Ledger> and repeated <Txn> elements, dates formatted dd-MM-yyyy, nulls skipped.\n3. Module functions: maskCustomer (keep first 2 chars), toMoney(n, ccy), normalizeOneOrMany — each used and MUnit-tested.",
+      "checklist": [
+        "Embedded JSON parsed with read(), channels aggregated correctly",
+        "groupBy → mapObject → pluck pipeline produces the summary array",
+        "XML repeated-element pattern correct with single root and skipNullOn",
+        "All shared logic lives in the module, zero copy-paste between transforms",
+        "MUnit green on all three module functions including edge cases (empty array, single object)"
+      ]
+    }
+  }
+}
