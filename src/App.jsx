@@ -1,18 +1,20 @@
+import { lazy, Suspense } from 'react'
 import { Routes, Route, Navigate } from 'react-router-dom'
 import { useAuth } from './context/AuthContext'
 import { useGame } from './context/GameContext'
 import AppLayout from './components/layout/AppLayout'
 import AuthScreen from './screens/AuthScreen'
-import Dashboard from './screens/Dashboard'
-import WorldMap from './screens/WorldMap'
-import ChapterView from './screens/ChapterView'
-import ConceptScreen from './screens/ConceptScreen'
-import QuizScreen from './screens/QuizScreen'
-import BossFightScreen from './screens/BossFightScreen'
-import CertTrialScreen from './screens/CertTrialScreen'
-import InventoryScreen from './screens/InventoryScreen'
-import ProfileScreen from './screens/ProfileScreen'
-import DungeonsScreen from './screens/DungeonsScreen'
+
+const Dashboard = lazy(() => import('./screens/Dashboard'))
+const WorldMap = lazy(() => import('./screens/WorldMap'))
+const ChapterView = lazy(() => import('./screens/ChapterView'))
+const ConceptScreen = lazy(() => import('./screens/ConceptScreen'))
+const QuizScreen = lazy(() => import('./screens/QuizScreen'))
+const BossFightScreen = lazy(() => import('./screens/BossFightScreen'))
+const CertTrialScreen = lazy(() => import('./screens/CertTrialScreen'))
+const InventoryScreen = lazy(() => import('./screens/InventoryScreen'))
+const ProfileScreen = lazy(() => import('./screens/ProfileScreen'))
+const DungeonsScreen = lazy(() => import('./screens/DungeonsScreen'))
 
 function Loader() {
   return (
@@ -34,20 +36,22 @@ export default function App() {
   if (!game?.ready) return <Loader />
 
   return (
-    <Routes>
-      <Route element={<AppLayout />}>
-        <Route path="/" element={<Dashboard />} />
-        <Route path="/map" element={<WorldMap />} />
-        <Route path="/chapter/:chapterId" element={<ChapterView />} />
-        <Route path="/chapter/:chapterId/concept/:conceptId" element={<ConceptScreen />} />
-        <Route path="/chapter/:chapterId/quiz/:conceptId" element={<QuizScreen />} />
-        <Route path="/chapter/:chapterId/boss" element={<BossFightScreen />} />
-        <Route path="/trial/:certId" element={<CertTrialScreen />} />
-        <Route path="/inventory" element={<InventoryScreen />} />
-        <Route path="/profile" element={<ProfileScreen />} />
-        <Route path="/dungeons" element={<DungeonsScreen />} />
-        <Route path="*" element={<Navigate to="/" replace />} />
-      </Route>
-    </Routes>
+    <Suspense fallback={<Loader />}>
+      <Routes>
+        <Route element={<AppLayout />}>
+          <Route path="/" element={<Dashboard />} />
+          <Route path="/map" element={<WorldMap />} />
+          <Route path="/chapter/:chapterId" element={<ChapterView />} />
+          <Route path="/chapter/:chapterId/concept/:conceptId" element={<ConceptScreen />} />
+          <Route path="/chapter/:chapterId/quiz/:conceptId" element={<QuizScreen />} />
+          <Route path="/chapter/:chapterId/boss" element={<BossFightScreen />} />
+          <Route path="/trial/:certId" element={<CertTrialScreen />} />
+          <Route path="/inventory" element={<InventoryScreen />} />
+          <Route path="/profile" element={<ProfileScreen />} />
+          <Route path="/dungeons" element={<DungeonsScreen />} />
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Route>
+      </Routes>
+    </Suspense>
   )
 }

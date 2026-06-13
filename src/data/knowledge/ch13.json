@@ -225,6 +225,63 @@
       "prerequisites": ["AIF-001"],
       "ai_tags": ["composer", "rpa", "code-builder", "fusion-teams", "ai-assisted-dev"]
     }
+    ,{
+      "concept_id": "AIF-005",
+      "title": "The 2025 AI Connector Lineup: Inference, Vector, Einstein & Agentforce",
+      "card": {
+        "what": "The original AI Chain connector evolved into four specialised connectors on Anypoint Exchange. Inference Connector: multi-provider LLM calls (OpenAI, Anthropic, Azure, Bedrock, Vertex, Ollama). Vector Connector: purpose-built vector DB operations (upsert, similarity search, delete) for pgvector, Pinecone, Milvus, OpenSearch. Einstein AI Connector: LLM calls routed through Salesforce's Einstein Trust Layer — PII masking, audit trail, model routing, toxicity filtering baked in. Agentforce Connector (1.2): invoke and orchestrate Salesforce Agentforce agents from Mule flows.",
+        "how": "Inference Connector takes a provider config (model, API key, temperature, max tokens) and an operation (chat, complete, embed). Responses are typed Mule messages. Vector Connector operations are: upsert-document, similarity-search (returns top-k with scores and metadata), delete-by-id, delete-by-filter. Einstein Connector wraps the same LLM interface behind the Trust Layer: configure an Einstein platform connection, pick a model, and every call is logged, PII-redacted and auditable in Salesforce. Agentforce Connector invokes a named Agentforce agent with an input payload and receives the agent's actions/response — Mule provides the API integration layer that the Agentforce agent calls back into.",
+        "exam_traps": [
+          "Inference ≠ Einstein: Inference hits provider APIs directly (you own key, audit, PII handling); Einstein routes through the Trust Layer (Salesforce-managed governance). Use Einstein when org policy requires Salesforce's compliance envelope; Inference for flexibility.",
+          "Agentforce Connector is for invoking Salesforce-hosted agents FROM Mule — not for building agents inside Mule. The agent's tools are Salesforce actions + APIs you expose through Anypoint.",
+          "Vector Connector is the production-grade replacement for ad-hoc HTTP calls to vector DBs in AI Chain flows — it handles chunked upserts, embedding format alignment, and query result pagination.",
+          "All four connectors are available on Anypoint Exchange and follow standard Mule connector patterns: configurations (reusable), operations (per-event), error namespaces (EINSTEIN:*, INFERENCE:*, VECTOR:*, AGENTFORCE:*)."
+        ],
+        "hands_on": "Configure the Inference Connector with OpenAI (or any provider you have a key for). Build three flows: (1) /chat that takes a user message and returns a completion, (2) /embed that embeds text and upserts to a Vector Connector config (local pgvector or a free Pinecone tier), (3) /ask that embeds the query, retrieves top-3, and passes context to Inference for an answer with sources. Compare the request/response structure with the older AI Chain pattern — note what the new connectors standardise.",
+        "deep_dive": "Architecture placement: Inference + Vector = the build-your-own AI pipeline (full control, any provider, your own governance layer). Einstein = Salesforce-governed AI inside the Salesforce ecosystem (Einstein Trust Layer audit satisfies many enterprise compliance requirements without building your own). Agentforce = the orchestration bridge when Agentforce agents need to act on enterprise systems via Mule's connector library.\n\nThe Einstein Trust Layer specifically: intercepts all LLM traffic, applies org-configured PII masking rules (dynamic grounding), logs every prompt/response pair to a secure audit store, and can route to different foundation models per policy — this is the enterprise-grade answer to 'how do we govern AI usage across the whole company.'\n\nMule 4.11 (released 2025) ships NETTY as the default HTTP service (replacing Grizzly). For AI workloads with long-running LLM calls this matters: NETTY handles non-blocking I/O better, supports HTTP/2, and eliminates Grizzly's thread-blocking patterns under streaming responses. Set mule.http.service.implementation=GRIZZLY only if you need the legacy behaviour.\n\nFor MCIA scenarios: position Agentforce Connector as the integration-to-AI bridge in Salesforce-centric architectures; Inference+Vector for greenfield AI pipelines; Einstein for compliance-first orgs already on Salesforce."
+      },
+      "quiz": [
+        {
+          "id": "AIF-005-q1",
+          "q": "Your org's security policy requires all LLM calls to be PII-masked and audit-logged in Salesforce. Which connector enforces this without you building the audit layer?",
+          "options": [
+            "Inference Connector with a custom DataWeave PII filter",
+            "Einstein AI Connector via the Einstein Trust Layer — PII masking, audit, and model governance are built-in",
+            "Vector Connector",
+            "Agentforce Connector"
+          ],
+          "answer": 1,
+          "explanation": "The Einstein Trust Layer is the Salesforce-managed governance envelope. Inference is direct-to-provider; you'd have to build the audit/PII layer yourself."
+        },
+        {
+          "id": "AIF-005-q2",
+          "q": "Agentforce Connector 1.2 is used to:",
+          "options": [
+            "Build an AI agent inside a Mule flow",
+            "Invoke a Salesforce Agentforce agent from a Mule flow, passing inputs and receiving the agent's output/actions",
+            "Replace the Inference Connector for Salesforce models",
+            "Store embeddings in Salesforce"
+          ],
+          "answer": 1,
+          "explanation": "Agentforce Connector invokes pre-built Salesforce agents — Mule is the orchestration and integration layer feeding and receiving from the agent, not the agent itself."
+        },
+        {
+          "id": "AIF-005-q3",
+          "q": "Mule 4.11 changed the default HTTP service from Grizzly to NETTY. Why does this matter for AI integration flows specifically?",
+          "options": [
+            "NETTY is faster on simple GET requests",
+            "LLM calls are long-latency; NETTY's non-blocking I/O and HTTP/2 support handle streaming responses and concurrent AI calls without the thread-blocking issues Grizzly had under load",
+            "NETTY adds JWT validation",
+            "It doesn't matter for AI flows"
+          ],
+          "answer": 1,
+          "explanation": "AI workloads have long-running calls and often use streaming. NETTY's reactive model handles this cleanly; Grizzly blocked threads waiting for responses."
+        }
+      ],
+      "difficulty": "advanced",
+      "prerequisites": ["AIF-001"],
+      "ai_tags": ["inference-connector", "vector-connector", "einstein-trust-layer", "agentforce", "mule-4-11"]
+    }
   ],
   "side_quests": [
     {

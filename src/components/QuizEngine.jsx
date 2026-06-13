@@ -8,14 +8,33 @@ import { Timer, CheckCircle2, XCircle, ChevronRight } from 'lucide-react'
  * onFinish({ score, correctCount, total, failedQuestionIds, timeSpent, perCategory })
  * mode: 'quiz' | 'boss' | 'trial'
  */
+function shuffle(arr) {
+  const a = [...arr]
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]]
+  }
+  return a
+}
+
+function shuffleQuestion(q) {
+  const correctText = q.options[q.answer]
+  const shuffledOptions = shuffle(q.options)
+  return { ...q, options: shuffledOptions, answer: shuffledOptions.indexOf(correctText) }
+}
+
 export default function QuizEngine({ questions, secondsPerQuestion = 60, totalSeconds, onFinish, mode = 'quiz', showExplanations = true }) {
+  // Shuffle question order + option order once per mount (parent resets via key={round})
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const shuffledQuestions = useMemo(() => shuffle(questions).map(shuffleQuestion), [])
+
   const [idx, setIdx] = useState(0)
   const [selected, setSelected] = useState(null)
   const [locked, setLocked] = useState(false)
   const [answers, setAnswers] = useState([]) // {id, correct, category}
   const startRef = useRef(Date.now())
   const deadline = useMemo(
-    () => Date.now() + (totalSeconds ?? questions.length * secondsPerQuestion) * 1000,
+    () => Date.now() + (totalSeconds ?? shuffledQuestions.length * secondsPerQuestion) * 1000,
     [] // eslint-disable-line react-hooks/exhaustive-deps
   )
   const [timeLeft, setTimeLeft] = useState(Math.round((deadline - Date.now()) / 1000))
@@ -24,12 +43,12 @@ export default function QuizEngine({ questions, secondsPerQuestion = 60, totalSe
   const finish = useCallback((finalAnswers) => {
     if (finished) return
     setFinished(true)
-    const total = questions.length
+    const total = shuffledQuestions.length
     const correctCount = finalAnswers.filter((a) => a.correct).length
     const failedQuestionIds = finalAnswers.filter((a) => !a.correct).map((a) => a.id)
     // Unanswered count as failed
     const answeredIds = new Set(finalAnswers.map((a) => a.id))
-    questions.forEach((q) => { if (!answeredIds.has(q.id)) failedQuestionIds.push(q.id) })
+    shuffledQuestions.forEach((q) => { if (!answeredIds.has(q.id)) failedQuestionIds.push(q.id) })
     const perCategory = {}
     finalAnswers.forEach((a) => {
       if (!a.category) return
@@ -45,7 +64,7 @@ export default function QuizEngine({ questions, secondsPerQuestion = 60, totalSe
       timeSpent: Math.round((Date.now() - startRef.current) / 1000),
       perCategory
     })
-  }, [finished, questions, onFinish])
+  }, [finished, shuffledQuestions, onFinish])
 
   // countdown
   useEffect(() => {
@@ -60,7 +79,7 @@ export default function QuizEngine({ questions, secondsPerQuestion = 60, totalSe
     return () => clearInterval(t)
   }, [deadline, answers, finish])
 
-  const q = questions[idx]
+  const q = shuffledQuestions[idx]
   if (!q) return null
 
   const pick = (i) => {
@@ -82,7 +101,7 @@ export default function QuizEngine({ questions, secondsPerQuestion = 60, totalSe
     }
     setSelected(null)
     setLocked(false)
-    if (idx + 1 >= questions.length) {
+    if (idx + 1 >= shuffledQuestions.length) {
       finish(updated)
     } else {
       setIdx(idx + 1)
@@ -98,7 +117,7 @@ export default function QuizEngine({ questions, secondsPerQuestion = 60, totalSe
       {/* HUD */}
       <div className="flex items-center justify-between mb-4">
         <div className="text-xs font-mono text-slate-500">
-          QUESTION <span className="text-slate-200">{idx + 1}</span> / {questions.length}
+          QUESTION <span className="text-slate-200">{idx + 1}</span> / {shuffledQuestions.length}
         </div>
         <div className={`flex items-center gap-1.5 font-mono text-sm ${urgent ? 'text-neon-red animate-pulseline' : 'text-slate-400'}`}>
           <Timer size={14} /> {mins}:{String(secs).padStart(2, '0')}
@@ -108,7 +127,7 @@ export default function QuizEngine({ questions, secondsPerQuestion = 60, totalSe
       <div className="h-1 rounded-full bg-raised mb-5 overflow-hidden">
         <div
           className={`h-full transition-all ${mode === 'boss' ? 'bg-neon-red' : mode === 'trial' ? 'bg-neon-amber' : 'bg-neon-cyan'}`}
-          style={{ width: `${((idx + 1) / questions.length) * 100}%` }}
+          style={{ width: `${((idx + 1) / shuffledQuestions.length) * 100}%` }}
         />
       </div>
 
@@ -165,7 +184,7 @@ export default function QuizEngine({ questions, secondsPerQuestion = 60, totalSe
               disabled={selected === null}
               className="btn-primary flex items-center gap-2"
             >
-              {idx + 1 >= questions.length ? 'Finish' : 'Next'} <ChevronRight size={14} />
+              {idx + 1 >= shuffledQuestions.length ? 'Finish' : 'Next'} <ChevronRight size={14} />
             </button>
           </div>
         </motion.div>
