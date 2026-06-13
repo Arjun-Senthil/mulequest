@@ -25,12 +25,11 @@ function Toast({ toast }) {
       {toast && (
         <motion.div
           key={toast.id}
-          initial={{ opacity: 0, y: 24, scale: 0.95 }}
+          initial={{ opacity: 0, y: 32, scale: 0.85 }}
           animate={{ opacity: 1, y: 0, scale: 1 }}
-          exit={{ opacity: 0, y: 12 }}
-          className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 px-5 py-3 rounded-xl
-            bg-raised border border-neon-cyan/40 shadow-glow font-display font-semibold
-            text-neon-cyan tracking-wide text-sm"
+          exit={{ opacity: 0, y: 16, scale: 0.9 }}
+          transition={{ type: 'spring', stiffness: 300, damping: 20 }}
+          className="toast-popup"
         >
           {toast.msg}
         </motion.div>
@@ -48,10 +47,10 @@ export default function AppLayout() {
   return (
     <div className="min-h-screen flex">
       {/* ===== Left nav (desktop) ===== */}
-      <aside className="hidden lg:flex flex-col w-56 shrink-0 border-r border-edge bg-panel/70 backdrop-blur">
+      <aside className="hidden lg:flex flex-col w-56 shrink-0 border-r-2 border-edge bg-panel/90 backdrop-blur">
         <div className="px-5 py-6">
-          <div className="font-display text-xl font-bold tracking-[0.2em] neon-text">MULEQUEST</div>
-          <div className="text-[10px] font-mono text-slate-500 mt-1">zero → MCIA · v1.0</div>
+          <div className="logo-text">MULEQUEST</div>
+          <div className="text-[9px] font-mono text-ink-400 mt-2 tracking-widest uppercase">zero → MCIA · v1.0</div>
         </div>
         <nav className="flex-1 px-3 space-y-1">
           {NAV.map(({ to, label, icon: Icon, end }) => (
@@ -59,36 +58,30 @@ export default function AppLayout() {
               key={to}
               to={to}
               end={end}
-              className={({ isActive }) =>
-                `flex items-center gap-3 px-3 py-2.5 rounded-lg font-display font-semibold tracking-wide text-sm transition-all ${
-                  isActive
-                    ? 'bg-neon-cyan/10 text-neon-cyan border border-neon-cyan/30'
-                    : 'text-slate-400 hover:text-slate-200 hover:bg-raised border border-transparent'
-                }`
-              }
+              className={({ isActive }) => `nav-link${isActive ? ' active' : ''}`}
             >
-              <Icon size={17} /> {label}
+              <Icon size={16} /> {label}
             </NavLink>
           ))}
         </nav>
-        <div className="p-4 border-t border-edge">
+        <div className="p-4 border-t-2 border-edge">
           {!demoMode && (
-            <button onClick={signOut} className="flex items-center gap-2 text-slate-500 hover:text-slate-300 text-sm font-display">
+            <button onClick={signOut} className="flex items-center gap-2 text-ink-400 hover:text-ink-100 text-sm font-display font-bold transition-colors">
               <LogOut size={15} /> Sign out
             </button>
           )}
-          {demoMode && <div className="text-[10px] font-mono text-neon-amber/70">DEMO MODE — local storage</div>}
+          {demoMode && <div className="text-[9px] font-mono text-neon-amber/70 tracking-widest uppercase">Demo Mode</div>}
         </div>
       </aside>
 
       {/* ===== Main column ===== */}
       <div className="flex-1 flex flex-col min-w-0">
         {/* Top bar */}
-        <header className="sticky top-0 z-40 flex items-center gap-3 px-4 lg:px-6 py-3 border-b border-edge bg-void/80 backdrop-blur">
-          <button className="lg:hidden text-slate-400" onClick={() => setNavOpen(true)} aria-label="Open navigation">
+        <header className="sticky top-0 z-40 flex items-center gap-3 px-4 lg:px-6 py-3 border-b-2 border-edge glass">
+          <button className="lg:hidden text-ink-300 hover:text-ink-100 transition-colors" onClick={() => setNavOpen(true)} aria-label="Open navigation">
             <Menu size={20} />
           </button>
-          <div className="lg:hidden font-display font-bold tracking-widest neon-text text-sm">MULEQUEST</div>
+          <div className="lg:hidden logo-text" style={{fontSize:'9px'}}>MULEQUEST</div>
           <div className="flex-1 max-w-md hidden sm:block">
             <XPBar />
           </div>
@@ -131,20 +124,16 @@ export default function AppLayout() {
               transition={{ type: 'tween', duration: 0.2 }}
             >
               <div className="flex items-center justify-between mb-6">
-                <div className="font-display font-bold tracking-widest neon-text">MULEQUEST</div>
-                <button onClick={() => setNavOpen(false)} className="text-slate-400"><X size={18} /></button>
+                <div className="logo-text" style={{fontSize:'9px'}}>MULEQUEST</div>
+                <button onClick={() => setNavOpen(false)} className="text-ink-400 hover:text-ink-100"><X size={18} /></button>
               </div>
               <nav className="space-y-1">
                 {NAV.map(({ to, label, icon: Icon, end }) => (
                   <NavLink
                     key={to} to={to} end={end} onClick={() => setNavOpen(false)}
-                    className={({ isActive }) =>
-                      `flex items-center gap-3 px-3 py-2.5 rounded-lg font-display font-semibold text-sm ${
-                        isActive ? 'bg-neon-cyan/10 text-neon-cyan' : 'text-slate-400'
-                      }`
-                    }
+                    className={({ isActive }) => `nav-link${isActive ? ' active' : ''}`}
                   >
-                    <Icon size={17} /> {label}
+                    <Icon size={16} /> {label}
                   </NavLink>
                 ))}
               </nav>

@@ -1,28 +1,38 @@
 import { motion } from 'framer-motion'
 import { useGame } from '../context/GameContext'
 import { levelProgress, titleForLevel } from '../lib/xp'
+import { Zap } from 'lucide-react'
 
 export default function XPBar() {
   const { profile } = useGame()
   if (!profile) return null
   const { level, current, needed, pct } = levelProgress(profile.xp || 0)
 
+  const hpColor = pct > 50 ? 'fill-green' : pct > 25 ? 'fill-amber' : 'fill-red'
+
   return (
     <div className="flex items-center gap-3">
-      <div className="flex items-center justify-center w-9 h-9 rounded-lg bg-neon-cyan/10 border border-neon-cyan/40 font-display font-bold text-neon-cyan text-sm shrink-0">
-        {level}
-      </div>
+      {/* Level badge — pixel font */}
+      <div className="stat-badge w-10 h-10 shrink-0 text-xs">{level}</div>
+
       <div className="flex-1 min-w-0">
-        <div className="flex justify-between text-[10px] font-mono text-slate-500 mb-1">
-          <span className="truncate">{titleForLevel(level)}</span>
-          <span>{current}/{needed} XP</span>
+        {/* Title + XP count */}
+        <div className="flex items-center justify-between mb-1.5 gap-2">
+          <span className="text-[10px] font-bold text-ink-200 truncate uppercase tracking-wider">
+            {titleForLevel(level)}
+          </span>
+          <span className="text-[10px] font-mono text-neon-amber shrink-0 flex items-center gap-0.5">
+            <Zap size={9} className="text-neon-amber" />{current}<span className="text-ink-400">/{needed}</span>
+          </span>
         </div>
-        <div className="h-2 rounded-full bg-raised border border-edge overflow-hidden">
+
+        {/* HP-style bar */}
+        <div className="hp-bar-track">
           <motion.div
-            className="h-full bg-gradient-to-r from-neon-cyan to-neon-violet"
+            className={`progress-bar-fill ${hpColor}`}
             initial={{ width: 0 }}
             animate={{ width: `${pct}%` }}
-            transition={{ type: 'spring', stiffness: 60 }}
+            transition={{ type: 'spring', stiffness: 55, damping: 12 }}
           />
         </div>
       </div>
