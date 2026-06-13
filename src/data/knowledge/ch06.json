@@ -215,6 +215,115 @@
       "prerequisites": ["ERR-002"],
       "ai_tags": ["vm-queues", "reliability-pattern", "reconnection", "durability"]
     }
+    ,{
+      "concept_id": "ERR-005",
+      "title": "Raise Error, Custom Types & on-error-continue vs propagate",
+      "card": {
+        "what": "Three error handling mechanisms you must master:\n1. **Raise Error** component — explicitly throws a typed error from your flow. Use for validation failures, business rule violations, and test-driving error handlers.\n2. **Custom error types** — define your own `APP:VALIDATION`, `APP:NOT_FOUND`, `APP:BUSINESS_RULE` namespaces to make error handling intentional and readable.\n3. **on-error-continue vs on-error-propagate** — the most misunderstood distinction in Mule error handling. Determines whether the parent flow considers the execution successful or failed after the handler runs.",
+        "how": "Raise Error:\n```xml\n<raise-error type=\"APP:VALIDATION\"\n             description=\"Amount must be positive\"/>\n```\nCustom namespace (any non-Mule prefix):\n```xml\n<raise-error type=\"ORDER:DUPLICATE\"\n             description=\"Order #$(payload.id) already exists\"/>\n```\nError handler scoping:\n```xml\n<error-handler>\n  <!-- Execution continues after this handler — caller sees SUCCESS -->\n  <on-error-continue type=\"APP:VALIDATION\">\n    <set-payload value=\"{error: '$(error.description)'}\"/>\n  </on-error-continue>\n\n  <!-- Error re-thrown after handler — caller sees FAILURE -->\n  <on-error-propagate type=\"APP:SYSTEM_DOWN\">\n    <logger message=\"ALERT: $(error.description)\"/>\n  </on-error-propagate>\n</error-handler>\n```",
+        "exam_traps": [
+          "on-error-CONTINUE: handler runs, then execution resumes as if no error occurred. The flow returns normally. Use for recoverable/expected errors (validation, not-found) where you want to return a 400/404 response.",
+          "on-error-PROPAGATE: handler runs, then the error is RE-THROWN to the parent. The flow is still considered failed. Use for system errors (DB down, upstream timeout) that the caller must know about.",
+          "error.description is set by the description attribute of raise-error. error.errorType.identifier gives you the type string (e.g., 'VALIDATION'). error.errorType.namespace gives you 'APP' or your custom namespace.",
+          "Error handlers on a flow catch errors from ALL components in that flow — including nested Set Variable, Transform, etc. Sub-flow errors propagate to the calling flow's handler, not the sub-flow's (sub-flows have no own error handler)."
+        ],
+        "hands_on": "Build a 'validate and process order' flow:\n1. Choice: if `payload.amount <= 0`, raise `APP:VALIDATION` with description 'Amount must be positive'.\n2. If `payload.status == 'CANCELLED'`, raise `ORDER:DUPLICATE_CANCEL` with a business message.\n3. Add flow-level error-handler:\n   - on-error-continue for `APP:VALIDATION` → set HTTP status 400, payload = `{error: description}`.\n   - on-error-propagate for `ORDER:*` → log the error, let it bubble.\n4. Test with Postman: valid payload, amount=0, cancelled status.",
+        "deep_dive": "**Why the continue/propagate distinction matters at scale:**\nIn an API-led architecture, your System API raises errors, your Process API's error handler decides continue vs propagate, and your Experience API formats the final error response. If you propagate all errors, every layer sees them — fine for observability, but the HTTP connector wraps them in 500 unless you intercept. If you continue on business errors at the Process layer, the Experience API gets a clean `{error: ...}` payload and returns 400/422 — cleaner for consumers.\n\n**Error type hierarchy for matching:**\n```\nANY → catches everything\nMULE:CONNECTIVITY → all connectivity errors\nHTTP:* → all HTTP connector errors\nHTTP:NOT_FOUND → specific 404\n```\nOrder matters — more specific types first, ANY last.\n\n**Raise Error in MUnit:** `raise-error` is essential for unit testing error handlers without having to actually break a DB connection. Mock the failing step, raise the expected type, verify the handler runs correctly."
+      },
+      "quiz": [
+        {
+          "id": "ERR-005-q1",
+          "q": "on-error-continue handles an error. What does the flow's caller observe?",
+          "options": [
+            "The original error, re-thrown",
+            "A wrapped MULE:UNKNOWN error",
+            "Normal completion — the handler's output becomes the flow result",
+            "A 500 HTTP response always"
+          ],
+          "answer": 2,
+          "explanation": "continue = execution resumes normally after the handler. Caller sees a successful response with whatever payload the handler set."
+        },
+        {
+          "id": "ERR-005-q2",
+          "q": "You want a flow to return HTTP 400 for validation errors but let system errors bubble to the caller as failures. Which combination?",
+          "options": [
+            "on-error-propagate for APP:VALIDATION, on-error-continue for system errors",
+            "on-error-continue for APP:VALIDATION (set 400 payload), on-error-propagate for system errors",
+            "Two on-error-propagate handlers with different status codes",
+            "One global ANY handler with a status code switch"
+          ],
+          "answer": 1,
+          "explanation": "continue on validation lets you set the 400 response and return normally. propagate on system errors lets the caller know something actually broke."
+        },
+        {
+          "id": "ERR-005-q3",
+          "q": "A sub-flow throws an error. Which error handler catches it?",
+          "options": [
+            "The sub-flow's own error handler",
+            "The error handler of the flow that called the sub-flow via Flow Reference",
+            "The global default error handler only",
+            "Sub-flows cannot throw errors"
+          ],
+          "answer": 1,
+          "explanation": "Sub-flows do NOT have their own error handlers — errors propagate to the calling flow's error handler. Only flows (not sub-flows) own error handlers."
+        }
+      ],
+      "difficulty": "intermediate",
+      "prerequisites": ["ERR-001"],
+      "ai_tags": ["raise-error", "custom-error-types", "on-error-continue", "on-error-propagate", "error-handling"]
+    }
+    ,{
+      "concept_id": "ERR-006",
+      "title": "Error Handling in DataWeave: try(), validation & defensive transforms",
+      "card": {
+        "what": "Flow-level error handlers don't help when a DataWeave transform throws midway through processing an array — the entire transform fails. DataWeave has its own error-safety toolkit:\n1. **`try()`** — catches exceptions inside a transform and returns structured result/error.\n2. **`Validator` functions** — `isEmpty`, `isBlank`, custom type checks before using a value.\n3. **Null-safe selectors** — `payload.?field` returns null instead of throwing on missing keys.\n4. **`default` operator** — `payload.field default 'fallback'` for safe fallbacks.\n5. **`@` metadata selector** — access XML attributes, MIME metadata without failing on absence.",
+        "how": "try():\n```\ntry(() -> read(item.embeddedJson, 'application/json')) match {\n  case { success: true  } -> $.result\n  case { success: false } -> { parseError: $.error.message }\n}\n```\nNull-safe + default:\n```\npayload.?customer.?address.?city default 'UNKNOWN'\n// chained optional selectors — no NPE\n```\nConditional key inclusion:\n```\n{\n  id: payload.id,\n  (discount: payload.discount) if payload.?discount != null,\n  status: payload.status default 'PENDING'\n}\n```\nArray-safe transform pattern:\n```\npayload map (item, index) ->\n  try(() -> {\n    amount: item.amount as Number,\n    date: item.date as Date {format: 'dd-MM-yyyy'}\n  }) match {\n    case { success: true  } -> $.result\n    case { success: false } -> { _error: true, _index: index, _reason: $.error.message, raw: item }\n  }\n```",
+        "exam_traps": [
+          "Null-safe selector `payload.?field` returns null for missing keys — NOT an empty string or 0. Chain with `default` if you need a specific fallback value.",
+          "`try()` requires a zero-argument lambda: `try(() -> expr)`. Passing `try(expr)` directly is a type error.",
+          "Conditional key `(key: val) if condition` — the parentheses wrap the WHOLE key-value pair, not just the value. Missing parens = syntax error.",
+          "Without defensive patterns, ONE bad record in a 10,000-item array fails the entire batch transform. try() on each item is the standard defensive pattern for bulk processing."
+        ],
+        "hands_on": "Input: an array of 5 customer records — some with missing fields, one with `dob` in wrong format, one with embedded JSON string in `preferences`. Write a defensive transform that:\n1. Parses `preferences` with `try()`.\n2. Coerces `dob` with `try()` — bad format → null.\n3. Uses `?` and `default` for all optional fields.\n4. Adds `_hasErrors: true` to any record that had any issue.\nOutput must process ALL 5 records regardless of individual failures.",
+        "deep_dive": "**Why `?` selector matters in XML integrations:** XML payloads are notorious for optional elements. In JSON you might get `null`; in XML the element is simply absent. `payload.order.?discount` handles both gracefully.\n\n**Conditional key inclusion vs null values:** two different things:\n- `(key: null)` — key IS present in output with null value\n- `(key: val) if val != null` — key is ABSENT from output when null\nAPI consumers usually prefer absent over null for optional fields — use `if` not default-to-null.\n\n**DataWeave error taxonomy inside try():**\n```\n$.error.kind         // 'ExpressionLanguageRuntimeException' etc.\n$.error.message      // human-readable\n$.error.location     // line:col in script\n```\n\n**Production pattern — error envelope in bulk APIs:**\n```\n{\n  processed: results filter !$.?_error,\n  failed: results filter $.?_error default [],\n  summary: { total: sizeOf(results), failedCount: sizeOf(failed) }\n}\n```\nThis gives API consumers a clean partial-success response instead of an all-or-nothing 500."
+      },
+      "quiz": [
+        {
+          "id": "ERR-006-q1",
+          "q": "`payload.?customer.?city` — `customer` key exists but `city` does not. Result?",
+          "options": ["Throws KeyNotFoundException","Returns null","Returns empty string ''","Returns {}"],
+          "answer": 1,
+          "explanation": "?. is the null-safe selector. Missing key returns null rather than throwing."
+        },
+        {
+          "id": "ERR-006-q2",
+          "q": "You want a key `discount` in the output ONLY when `payload.discount` is not null. Correct syntax?",
+          "options": [
+            "{discount: payload.discount default null}",
+            "{(discount: payload.discount) if payload.discount != null}",
+            "{discount?: payload.discount}",
+            "{discount: payload.?discount}"
+          ],
+          "answer": 1,
+          "explanation": "Conditional key inclusion: wrap the entire key-value pair in parens followed by `if condition`. The key is absent when condition is false."
+        },
+        {
+          "id": "ERR-006-q3",
+          "q": "You have 1000 records. One record has a malformed date field. Without try(), what happens to the 999 valid records?",
+          "options": [
+            "They're processed; only the bad one fails",
+            "The entire transform throws — all 1000 fail",
+            "The bad record is skipped automatically",
+            "DataWeave returns partial results up to the bad record"
+          ],
+          "answer": 1,
+          "explanation": "DataWeave transforms are atomic — one exception fails the whole expression. try() per item is mandatory for defensive bulk processing."
+        }
+      ],
+      "difficulty": "intermediate",
+      "prerequisites": ["ERR-001", "DW-008"],
+      "ai_tags": ["dataweave-try", "null-safe-selector", "defensive-transform", "error-handling", "dataweave"]
+    }
   ],
   "side_quests": [
     {

@@ -262,6 +262,137 @@
       "prerequisites": ["DW-002", "DW-003"],
       "ai_tags": ["functions", "modules", "pattern-matching", "recursion", "core-libraries"]
     }
+    ,{
+      "concept_id": "DW-006",
+      "title": "Pattern Matching: match/case & Type Guards",
+      "card": {
+        "what": "`match` is DataWeave's structural switch. Every arm is a `case` that tests a pattern — literal value, type guard (`is String`, `is Array`), guard expression (`if value > 0`), or wildcard `else`. The expression evaluates to the first matching arm. Unlike Java switch, `match` is an expression — it returns a value, composable inside map, reduce, or custom functions.",
+        "how": "Basic:\n```\npayload match {\n  case is String  -> upper(payload)\n  case is Number  -> payload * 1.2\n  case is Array   -> sizeOf(payload)\n  else            -> 'unknown'\n}\n```\nDestructuring:\n```\npayload match {\n  case { type: 'credit', amount: a } -> a\n  case { type: 'debit',  amount: a } -> -a\n  else -> 0\n}\n```\nGuarded arm:\n```\npayload.amount match {\n  case n if n > 10000 -> 'HIGH'\n  case n if n > 1000  -> 'MED'\n  else -> 'LOW'\n}\n```",
+        "exam_traps": [
+          "No `else` + no matching arm = runtime exception. Always add else in production.",
+          "`case is Null` must come BEFORE `case is Object` — Null is not a subtype of Object but arms are evaluated top-to-bottom.",
+          "Destructuring `case { key: val }` matches any object that CONTAINS those keys — extra keys are ignored. It is NOT strict equality.",
+          "Pattern variables (e.g. `a` in `case { amount: a }`) are scoped to that arm's expression only."
+        ],
+        "hands_on": "Write a DW script that maps a payment event array. Each event has `{type, amount, currency}`. Map to:\n- type=credit → `{direction: 'IN', value: amount, ccy: currency}`\n- type=debit, amount > 1000 → `{direction: 'OUT', value: amount, ccy: currency, flag: 'HIGH_VALUE'}`\n- type=debit → `{direction: 'OUT', value: amount, ccy: currency}`\n- else → `{direction: 'UNKNOWN', raw: $}`",
+        "deep_dive": "match vs if/else: use match for 3+ conditions on the same expression. Use if/else for two-branch logic or when conditions span different expressions.\n\nPolymorphic event router pattern:\n```\nfun route(event) =\n  event match {\n    case { eventType: 'ORDER',   payload: p } -> processOrder(p)\n    case { eventType: 'INVOICE', payload: p } -> processInvoice(p)\n    else -> { error: 'Unknown: ' ++ event.eventType }\n  }\n```\nThis replaces Choice Router when all routing is transform-level — keeps orchestration logic inside DataWeave rather than splitting it across flow components."
+      },
+      "quiz": [
+        {
+          "id": "DW-006-q1",
+          "q": "A `match` expression has no `else` arm and no arm matches at runtime. Result?",
+          "options": ["Returns null","Returns the last arm's value","Throws a runtime error","Returns {}"],
+          "answer": 2,
+          "explanation": "match is exhaustive — no match + no else = exception. Always include else."
+        },
+        {
+          "id": "DW-006-q2",
+          "q": "`case { amount: a } if a > 0 -> ...` — what is `a`?",
+          "options": ["The string 'amount'","The value of the amount key, bound for use in the guard and expression","A boolean — true if key exists","Invalid syntax"],
+          "answer": 1,
+          "explanation": "Destructuring binds the value to `a`. It's usable in both the if guard and the -> expression."
+        },
+        {
+          "id": "DW-006-q3",
+          "q": "payload is null. Arms: `case is Object -> 'obj'`, `case is Null -> 'null'`, `else -> 'other'`. Which fires?",
+          "options": ["'obj'","'null'","'other'","Runtime error"],
+          "answer": 1,
+          "explanation": "Arms evaluate top-to-bottom. `is Object` does NOT match null. `is Null` matches correctly."
+        }
+      ],
+      "difficulty": "intermediate",
+      "prerequisites": ["DW-002"],
+      "ai_tags": ["pattern-matching", "match-case", "type-guards", "dataweave"]
+    }
+    ,{
+      "concept_id": "DW-007",
+      "title": "Dates, Strings & the update Operator",
+      "card": {
+        "what": "Three tools that appear in nearly every real integration:\n1. **Date/Time** — `now()`, pipe literals (`|2024-01-15|`), coerce with format string, Period arithmetic (`|P1D|`, `|PT1H|`).\n2. **String functions** — `replace`, `match`, `scan`, `splitBy`, `trim`, `upper`, `lower`, `startsWith`, `endsWith`, `contains`, `substringBefore`, `substringAfter`.\n3. **`update` operator** (DW 2.5+) — surgically overwrite nested fields without reconstructing the whole object.",
+        "how": "Date formatting:\n```\nnow() as String {format: 'yyyy-MM-dd HH:mm:ss'}\n'15/01/2024' as Date {format: 'dd/MM/yyyy'} as String {format: 'yyyy-MM-dd'}\n```\nArithmetic:\n```\nnow() + |P7D|    // 7 days later\nnow() - |PT2H|   // 2 hours ago\n```\nString:\n```\n'hello world' replace /world/ with 'DW'\n'abc123def' scan /[0-9]+/            // [['123']]\n'key=value'  splitBy '='             // ['key','value']\n```\nupdate:\n```\npayload update {\n  case .customer.name   -> upper($)\n  case .order.status    -> 'PROCESSED'\n  case .order.updatedAt -> now() as String {format: 'yyyy-MM-dd'}\n}\n```",
+        "exam_traps": [
+          "`as Date` REQUIRES a format matching the input exactly — wrong format throws 'Invalid value for date'. Specify format explicitly every time.",
+          "Date literals: `|2024-01-15|` = Date, `|2024-01-15T10:00:00|` = DateTime, `|10:00:00|` = Time. Quoted strings are NOT dates until coerced.",
+          "`update` throws if the path doesn't resolve. Guard with a null check before using update on optional nested fields.",
+          "`replace` with a regex replaces ALL matches. To replace only the first, use `match` to find position or use `replaceFirst` workaround."
+        ],
+        "hands_on": "Input: `{id, customerName, createdAt: '15-01-2024', items: [{sku, qty, unitPrice}], status: 'pending'}`.\nProduce with a single `update`:\n1. `createdAt` → `yyyy-MM-dd` format.\n2. Add `processedAt` = now() as ISO string.\n3. Add `total` = sum of qty*unitPrice.\n4. `status` → uppercase.\n5. `customerName` masked to first 3 chars + `***`.",
+        "deep_dive": "**Date gotcha:** dates arriving over HTTP/JMS are strings. Always coerce explicitly before comparison or arithmetic — `payload.date as Date {format: 'yyyy-MM-dd'}` — never rely on implicit coercion.\n\n**Timezone:** `now()` uses server timezone. Use explicit timezone literals `|2024-01-15T00:00:00+05:30|` for IST. Convert with format string `\"yyyy-MM-dd'T'HH:mm:ssz\"`.\n\n**update vs rebuild:** never reconstruct 20 fields just to change 1. `update` is surgical and safe — original variable is untouched.\n\n**`scan` for PII extraction:** `email scan /([^@]+)@(.+)/` → `[['full', 'user', 'domain']]` — cleaner than split chains on complex patterns."
+      },
+      "quiz": [
+        {
+          "id": "DW-007-q1",
+          "q": "You receive `createdAt: '15/01/2024'` and need `yyyy-MM-dd`. Correct expression?",
+          "options": [
+            "'15/01/2024' as Date as String {format: 'yyyy-MM-dd'}",
+            "'15/01/2024' as Date {format: 'dd/MM/yyyy'} as String {format: 'yyyy-MM-dd'}",
+            "dateTimeFormat('15/01/2024', 'yyyy-MM-dd')",
+            "'15/01/2024' replace '/' with '-'"
+          ],
+          "answer": 1,
+          "explanation": "Two coercions: first to Date with source format, then to String with target format."
+        },
+        {
+          "id": "DW-007-q2",
+          "q": "`payload update { case .address.city -> upper($) }` — `payload.address` is null. What happens?",
+          "options": ["Silently skips","Throws runtime error","Creates {address: {city: null}}","Returns null"],
+          "answer": 1,
+          "explanation": "update throws if the path doesn't resolve. Guard with null check before using update on optional fields."
+        },
+        {
+          "id": "DW-007-q3",
+          "q": "`now() + |P1D|` — return type?",
+          "options": ["String","Date","DateTime","Number"],
+          "answer": 2,
+          "explanation": "now() returns DateTime. Period arithmetic on DateTime returns DateTime."
+        }
+      ],
+      "difficulty": "intermediate",
+      "prerequisites": ["DW-001"],
+      "ai_tags": ["dates", "strings", "update-operator", "dataweave", "coercion"]
+    }
+    ,{
+      "concept_id": "DW-008",
+      "title": "do blocks, Dynamic Keys, flatten & try()",
+      "card": {
+        "what": "Four advanced patterns that separate production DataWeave from tutorial DataWeave:\n1. **`do` block** — inline local variable/function scope. Replaces repeated subexpressions.\n2. **Dynamic keys** — `{(expr): value}` computes key names at runtime. Essential for pivot tables and polymorphic output.\n3. **`flatten` / `flatMap`** — collapses array nesting. `flatten` removes one level; `flatMap` = map then flatten.\n4. **`try()`** — wraps a zero-arg lambda and returns `{success: true, result}` or `{success: false, error}` instead of throwing.",
+        "how": "`do` block:\n```\ndo {\n  var discount = if (payload.tier == 'GOLD') 0.2 else 0.1\n  var base = payload.price\n  ---\n  { finalPrice: base * (1 - discount), tier: payload.tier }\n}\n```\nDynamic keys:\n```\n// config list → map object\n{(payload.config map { ($.key): $.value })}\n// group + pivot\npayload groupBy $.region mapObject (rows, region) -> {\n  (region): { total: sum(rows map $.amount) }\n}\n```\nflatten / flatMap:\n```\nflatten([[1,2],[3,4]])           // [1,2,3,4]\npayload.orders flatMap $.items   // all items across all orders\n```\ntry():\n```\ntry(() -> read(item.meta, 'application/json')) match {\n  case { success: true  } -> $.result\n  case { success: false } -> { error: $.error.message }\n}\n```",
+        "exam_traps": [
+          "`do` REQUIRES `---` separating declarations from output expression. Missing `---` is a syntax error.",
+          "`flatten` removes exactly ONE level of nesting. `flatten([[1,[2]]])` → `[1,[2]]`, NOT `[1,2]`.",
+          "Dynamic key: `{region: v}` = literal key 'region'. `{(region): v}` = variable's value as key. Parentheses are mandatory.",
+          "`try()` takes a ZERO-argument lambda: `try(() -> expr)`. Passing the expression directly is a syntax error."
+        ],
+        "hands_on": "Input: `{orders: [{id, region, items: [{sku, qty, price}]}]}`.\n1. Use `do` to define a `lineTotal(item)` helper.\n2. `flatMap` to get all line items across all orders (with order id attached).\n3. `groupBy $.region` + dynamic keys → `{APAC: {totalRevenue, skuCount}, EMEA: {...}}`.\n4. Wrap entire script in `try()` → `{status: 'OK', data: result}` or `{status: 'ERROR', reason: msg}`.",
+        "deep_dive": "**`do` vs module function:** `do` is inline and single-use. Module functions are for reuse across transforms. Rule: if you write the same logic twice, extract it to a module.\n\n**flatMap vs map+flatten:** `flatMap` is syntactic sugar for one-level flatten after map. Prefer it when you know flattening is needed. Use separate `flatten(map(...))` when the steps are conceptually distinct.\n\n**`try()` in production — critical pattern for nested JSON parsing:**\n```\npayload map (item) ->\n  try(() -> read(item.meta, 'application/json')) match {\n    case { success: true  } -> { (item) parsedMeta: $.result }\n    case { success: false } -> { (item) parsedMeta: null, metaError: $.error.message }\n  }\n```\nWithout `try()`, one malformed `meta` field crashes the entire transform. With it, bad records are flagged and processing continues — essential for batch pipelines."
+      },
+      "quiz": [
+        {
+          "id": "DW-008-q1",
+          "q": "`flatten([[1,2],[3,[4,5]]])` output?",
+          "options": ["[1,2,3,4,5]","[1,2,3,[4,5]]","[[1,2],[3,[4,5]]]","Error"],
+          "answer": 1,
+          "explanation": "flatten removes ONE level. Inner [4,5] survives. You'd need flatten again to remove the second level."
+        },
+        {
+          "id": "DW-008-q2",
+          "q": "In a `do` block, `---` separates:",
+          "options": ["Input and output types","var/fun declarations from the output expression","Multiple output formats","Nothing — optional whitespace"],
+          "answer": 1,
+          "explanation": "`---` is mandatory. Everything above = declarations; expression below = block's return value."
+        },
+        {
+          "id": "DW-008-q3",
+          "q": "You write `{region: rows}` but want to use the variable `region` as the key. Fix?",
+          "options": ["Use `{'$region': rows}`","Use `{(region): rows}` — parens make it dynamic","Use `{#region: rows}`","Use `{[region]: rows}`"],
+          "answer": 1,
+          "explanation": "Without parens, any identifier is a literal key string. (region) evaluates the expression and uses its value as the key."
+        }
+      ],
+      "difficulty": "advanced",
+      "prerequisites": ["DW-002", "DW-005"],
+      "ai_tags": ["do-block", "dynamic-keys", "flatten", "flatmap", "try", "dataweave"]
+    }
   ],
   "side_quests": [
     {

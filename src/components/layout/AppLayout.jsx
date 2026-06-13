@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { Outlet, NavLink } from 'react-router-dom'
 import { AnimatePresence, motion } from 'framer-motion'
 import {
-  LayoutDashboard, Map, Package, User, Swords, Menu, X, LogOut, Bot
+  LayoutDashboard, Map, Package, User, Swords, Menu, X, LogOut, Bot, Code2
 } from 'lucide-react'
 import { useAuth } from '../../context/AuthContext'
 import { useGame } from '../../context/GameContext'
@@ -13,6 +13,7 @@ import StreakBadge from '../StreakBadge'
 const NAV = [
   { to: '/', label: 'Dashboard', icon: LayoutDashboard, end: true },
   { to: '/map', label: 'World Map', icon: Map },
+  { to: '/dojo', label: 'DW Dojo', icon: Code2 },
   { to: '/dungeons', label: 'Dungeons', icon: Swords },
   { to: '/inventory', label: 'Inventory', icon: Package },
   { to: '/profile', label: 'Profile', icon: User }

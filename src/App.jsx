@@ -15,6 +15,7 @@ const CertTrialScreen = lazy(() => import('./screens/CertTrialScreen'))
 const InventoryScreen = lazy(() => import('./screens/InventoryScreen'))
 const ProfileScreen = lazy(() => import('./screens/ProfileScreen'))
 const DungeonsScreen = lazy(() => import('./screens/DungeonsScreen'))
+const DataWeaveDojo = lazy(() => import('./screens/DataWeaveDojo'))
 
 function Loader() {
   return (
@@ -49,6 +50,7 @@ export default function App() {
           <Route path="/inventory" element={<InventoryScreen />} />
           <Route path="/profile" element={<ProfileScreen />} />
           <Route path="/dungeons" element={<DungeonsScreen />} />
+          <Route path="/dojo" element={<DataWeaveDojo />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Route>
       </Routes>
