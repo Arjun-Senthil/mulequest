@@ -45,9 +45,9 @@ export default function AppLayout() {
   const [advisorOpen, setAdvisorOpen] = useState(false)
 
   return (
-    <div className="min-h-screen flex">
+    <div className="h-screen flex overflow-hidden">
       {/* ===== Left nav (desktop) ===== */}
-      <aside className="hidden lg:flex flex-col w-56 shrink-0 border-r-2 border-edge bg-panel/90 backdrop-blur">
+      <aside className="hidden lg:flex flex-col w-56 shrink-0 border-r-2 border-edge bg-panel/90 backdrop-blur overflow-y-auto">
         <div className="px-5 py-6">
           <div className="logo-text">MULEQUEST</div>
           <div className="text-[9px] font-mono text-ink-400 mt-2 tracking-widest uppercase">zero → MCIA · v1.0</div>

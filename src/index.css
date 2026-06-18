@@ -19,11 +19,11 @@
     min-height: 100vh;
   }
 
-  /* Subtle warm scrollbar */
-  ::-webkit-scrollbar        { width: 5px; height: 5px; }
-  ::-webkit-scrollbar-track  { background: #131210; }
-  ::-webkit-scrollbar-thumb  { background: #2a2620; border-radius: 4px; }
-  ::-webkit-scrollbar-thumb:hover { background: #3d3730; }
+  /* Warm scrollbar — visible but understated */
+  ::-webkit-scrollbar        { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track  { background: #1a1815; }
+  ::-webkit-scrollbar-thumb  { background: #4a4340; border-radius: 4px; }
+  ::-webkit-scrollbar-thumb:hover { background: #635b52; }
 
   ::selection { background: rgba(251,191,36,0.25); color: #faf8f5; }
 }
