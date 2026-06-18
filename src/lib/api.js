@@ -1,9 +1,18 @@
 // Frontend → serverless API bridge. The Claude key never touches the browser.
+import { supabase, DEMO_MODE } from './supabase'
+
+async function getAuthHeader() {
+  if (DEMO_MODE || !supabase) return {}
+  const { data } = await supabase.auth.getSession()
+  const token = data?.session?.access_token
+  return token ? { Authorization: `Bearer ${token}` } : {}
+}
 
 export async function requestDiagnosis(payload) {
+  const authHeader = await getAuthHeader()
   const res = await fetch('/api/ai/diagnose', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...authHeader },
     body: JSON.stringify(payload)
   })
   if (!res.ok) {

@@ -323,6 +323,63 @@
       "difficulty": "intermediate",
       "prerequisites": ["ERR-001", "DW-008"],
       "ai_tags": ["dataweave-try", "null-safe-selector", "defensive-transform", "error-handling", "dataweave"]
+    },
+    {
+      "concept_id": "ERR-007",
+      "title": "Batch Job Deep Dive: acceptExpression & acceptPolicy",
+      "card": {
+        "what": "Batch steps have two record-routing controls: acceptExpression (DataWeave boolean — which records enter this step) and acceptPolicy (ALL / NO_FAILURES / ONLY_FAILURES — filters by whether the record has accumulated failures from prior steps). Together they let you build separate success and remediation lanes in one batch job.",
+        "how": "acceptExpression=\"#[payload.amount > 0]\" gates by data value. acceptPolicy=\"ONLY_FAILURES\" on a downstream step creates a dead-letter lane — only records that failed an earlier step arrive here for logging/alerting. acceptPolicy=\"NO_FAILURES\" (default) skips failed records, keeping the happy path clean. batch:on-complete has access to batchJobResult: loadedRecords, processedRecords, failedRecords, successfulRecords.",
+        "exam_traps": [
+          "acceptPolicy and acceptExpression are AND-ed: a record must pass BOTH to enter the step. Setting ONLY_FAILURES but also an acceptExpression can create silent drops if the expression also filters.",
+          "Batch jobs are asynchronous by default — the triggering flow does NOT wait for completion unless you use a batch:job with synchronous='true' (rare) or poll batchJobResult via jobInstanceId.",
+          "MULE:COMPOSITE_ROUTING is Scatter-Gather's error, not Batch. Batch failures are per-record — the job continues; MULE:COMPOSITE_ROUTING stops the entire Scatter-Gather.",
+          "on-complete fires ONCE after ALL records processed — payload here is NOT the business data, it's the BatchJobResult statistics object. Accessing payload.id in on-complete is a common mistake."
+        ],
+        "hands_on": "Build a batch job syncing 1000 order records: Step 1 (NO_FAILURES, acceptExpression amount>0) — HTTP upsert to CRM; Step 2 (ONLY_FAILURES) — write failed records to an error DLQ via JMS. In on-complete, log 'Loaded: {loadedRecords} Processed: {processedRecords} Failed: {failedRecords}'. Force 10% failures and verify Step 2 captures exactly those records.",
+        "deep_dive": "XML pattern:\n<batch:job jobName=\"massiveDataSyncJob\">\n  <batch:process-records>\n    <batch:step name=\"Process_Valid_Records\" acceptExpression=\"#[payload.amount > 0]\">\n      <logger level=\"INFO\" message=\"#['Processing: ' ++ payload.id]\"/>\n    </batch:step>\n    <batch:step name=\"Handle_Failures\" acceptPolicy=\"ONLY_FAILURES\">\n      <logger level=\"ERROR\" message=\"#['Failed: ' ++ write(payload,'application/json')]\"/>\n    </batch:step>\n  </batch:process-records>\n  <batch:on-complete>\n    <logger level=\"INFO\" message=\"#['Done. Loaded: ' ++ payload.loadedRecords]\"/>\n  </batch:on-complete>\n</batch:job>\n\nBatch threading: maxConcurrency on batch:step controls parallelism per step. Persistent queuing: batch uses the OS persistent queue — survives app restart mid-run. Block size tunes memory vs throughput (default 100 records/block). For-Each is simpler but synchronous and memory-resident — use Batch when volume > ~500 records or fault tolerance matters."
+      },
+      "quiz": [
+        {
+          "id": "ERR-007-q1",
+          "q": "You want a batch step to process ONLY records that failed the previous enrichment step. Which setting?",
+          "options": [
+            "acceptExpression=\"#[payload.failed == true]\"",
+            "acceptPolicy=\"ONLY_FAILURES\"",
+            "acceptPolicy=\"NO_FAILURES\"",
+            "Add an error handler inside the previous step"
+          ],
+          "answer": 1,
+          "explanation": "acceptPolicy=\"ONLY_FAILURES\" routes failed records from prior steps — it's the built-in dead-letter lane mechanism."
+        },
+        {
+          "id": "ERR-007-q2",
+          "q": "In batch:on-complete, what does the payload variable contain?",
+          "options": [
+            "The last successfully processed business record",
+            "A BatchJobResult object with loadedRecords, processedRecords, failedRecords counts",
+            "An array of all processed records",
+            "Null — payload is cleared"
+          ],
+          "answer": 1,
+          "explanation": "on-complete payload is the statistics object, not business data. Accessing payload.id here returns null."
+        },
+        {
+          "id": "ERR-007-q3",
+          "q": "Scatter-Gather vs Batch: one route in Scatter-Gather fails. What happens?",
+          "options": [
+            "That route is skipped; others return results",
+            "Entire Scatter-Gather throws MULE:COMPOSITE_ROUTING — all routes fail together",
+            "Scatter-Gather retries the failed route",
+            "Scatter-Gather returns partial results with a flag"
+          ],
+          "answer": 1,
+          "explanation": "Scatter-Gather is all-or-nothing: any thread failure throws MULE:COMPOSITE_ROUTING. Batch is per-record fault-tolerant."
+        }
+      ],
+      "difficulty": "intermediate",
+      "prerequisites": ["ERR-003"],
+      "ai_tags": ["batch", "acceptPolicy", "acceptExpression", "scatter-gather", "on-complete"]
     }
   ],
   "side_quests": [
@@ -337,6 +394,12 @@
       "title": "Error Contract Architect",
       "description": "Design and implement a global error handler producing RFC-7807 problem+json (type, title, status, detail, correlationId) for: validation errors (400), not found (404), downstream timeout (504), downstream 5xx (502), unknown (500). Wire via defaultErrorHandler-ref and prove every path with curl.",
       "xp": 150
+    },
+    {
+      "quest_id": "ERR-SQ3",
+      "title": "SIMULATION: Architecture Triage",
+      "description": "Production incident scenario — your payment sync flow is processing 50,000 records and the app server is crashing with OutOfMemoryError halfway through. You have three options:\n\nA) Wrap the For-Each in a Try scope with an on-error-continue handler\nB) Replace For-Each with a Batch Job (persistent queuing, multi-threaded, disk-backed)\nC) Add more CloudHub workers (scale out)\n\nDecide which option is the ROOT FIX and which are band-aids. Document:\n1. Why For-Each fails at this volume (synchronous, memory-resident, no fault isolation)\n2. Why Try scope doesn't fix the OOM (still synchronous)\n3. Why more workers only delays the problem (same architecture, bigger machine)\n4. The correct Batch Job architecture: block size tuning, acceptPolicy for dead-letter, on-complete stats\n\nImplement the Batch Job version and prove it handles 50k records with intentional 5% failures routed to ONLY_FAILURES step.",
+      "xp": 200
     }
   ],
   "boss": {

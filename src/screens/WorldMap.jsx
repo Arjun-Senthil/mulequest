@@ -26,7 +26,7 @@ function CertGateNode({ gate }) {
       <div className="flex items-center justify-center gap-2 font-display font-bold tracking-widest text-sm">
         <Crown size={16} className={state.passed ? 'text-neon-green' : 'text-neon-amber'} />
         <span className={state.passed ? 'text-neon-green' : state.available ? 'text-neon-amber' : 'text-slate-500'}>
-          CERT GATE — {gate.name.toUpperCase()}
+          CERT GATE — {(gate.shortName || gate.name).toUpperCase()}
         </span>
       </div>
       <div className="text-[11px] font-mono text-slate-500 mt-1">

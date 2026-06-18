@@ -7,8 +7,12 @@ import { KNOWLEDGE } from '../data/knowledge'
 import { todaysChallenge } from '../data/dailyChallenges'
 import { titleForLevel } from '../lib/xp'
 
+function todayKey() {
+  return 'DAILY-' + new Date().toISOString().slice(0, 10)
+}
+
 export default function Dashboard() {
-  const { profile, chapterUnlocked, chapterStats, questStatus, certGateState, awardXp } = useGame()
+  const { profile, chapterUnlocked, chapterStats, questStatus, certGateState, awardXp, setQuest } = useGame()
   const navigate = useNavigate()
 
   // Active chapter = first unlocked, incomplete chapter
@@ -23,7 +27,7 @@ export default function Dashboard() {
     .find(({ state }) => state.available && !state.passed)
 
   const daily = todaysChallenge()
-  const dailyDone = false // daily completion tracked via XP award; simple by design
+  const dailyDone = questStatus(todayKey()) === 'completed'
 
   return (
     <div className="max-w-5xl mx-auto space-y-5">
@@ -132,11 +136,14 @@ export default function Dashboard() {
         <div className="font-display font-bold text-slate-100">{daily.title}</div>
         <p className="text-sm text-slate-400 mt-1 leading-relaxed">{daily.task}</p>
         <button
-          onClick={() => awardXp(40, 'Daily challenge')}
+          onClick={async () => {
+            await setQuest(0, todayKey(), 'completed')
+            await awardXp(40, 'Daily challenge')
+          }}
           disabled={dailyDone}
           className="btn-primary mt-3 text-xs"
         >
-          Mark complete (+40 XP)
+          {dailyDone ? 'Completed today ✓' : 'Mark complete (+40 XP)'}
         </button>
       </motion.div>
 

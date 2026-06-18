@@ -1,6 +1,6 @@
 {
   "cert_id": "MCD-L1",
-  "description": "MuleSoft Certified Developer — Level 1 mock. Platform fundamentals, API design, flows, DataWeave, connectors, basic error handling and deployment. Exam conditions: no feedback until the end.",
+  "description": "Salesforce Certified MuleSoft Developer I mock exam. Platform fundamentals, API design, flows, DataWeave, connectors, basic error handling and deployment. Managed via Salesforce Webassessor/Trailhead since May 2024. Exam conditions: no feedback until the end.",
   "questions": [
     { "id": "L1-001", "category": "Platform", "q": "Which Anypoint component is used to discover and reuse API specifications published by other teams?", "options": ["API Manager", "Exchange", "Runtime Manager", "Access Management"], "answer": 1, "explanation": "Exchange is the org-wide catalog for specs, connectors, templates and fragments." },
     { "id": "L1-002", "category": "Platform", "q": "An on-prem Mule runtime is managed by Runtime Manager. Which direction is the management connection established?", "options": ["Inbound from MuleSoft to the server", "Outbound from the runtime to the control plane", "Bidirectional VPN", "Via SFTP"], "answer": 1, "explanation": "The agent initiates an outbound TLS connection; no inbound management ports are opened." },

@@ -220,6 +220,63 @@
       "prerequisites": ["DEV-003"],
       "ai_tags": ["versioning", "code-review", "standards", "deprecation", "upgrades"]
     }
+    ,{
+      "concept_id": "DEV-005",
+      "title": "MUnit in Practice: XML Test Architecture",
+      "card": {
+        "what": "Concrete MUnit XML structure: munit:test wraps three phases — munit:behavior (mock-when), munit:execution (flow-ref), munit:validation (assert-that). Each mock pins a processor by type + doc:name attribute; then-return supplies fixture payload; assert-that uses MunitTools matchers.",
+        "how": "Pattern: mock-when processor=\"db:select\" with-attribute name=\"doc:name\" value=\"Query Legacy DB\" → then-return payload as application/java list. flow-ref executes the flow under test with that mock in place. assert-that checks expression #[payload.message] is equalTo('Event received successfully'). For error paths: use then-raise instead of then-return to inject HTTP:TIMEOUT, then assert the error handler's output.",
+        "exam_traps": [
+          "mock-when matches by PROCESSOR TYPE (db:select, http:request) — not by URL or SQL query. Narrowing by doc:name is optional but prevents wrong-mock collisions when a flow has two DB calls.",
+          "then-return mediaType must match what the flow expects downstream — application/java for Java collections (DB result sets), application/json for parsed maps. Wrong mediaType = type mismatch error in the mocked flow.",
+          "verify-call (not assert-that) checks whether a processor was called N times — use it to assert a Salesforce upsert ran exactly once, not zero. Common exam swap.",
+          "set-event seeds the test's inbound Mule Event (payload + attributes + vars) before execution — skipping it when the flow reads attributes.queryParams.status causes NullPointerException in test only."
+        ],
+        "hands_on": "Write three MUnit tests for a customer GET flow: (1) mock db:select → returns [{id:'001',name:'Arjun'}], assert payload[0].name equals 'Arjun'; (2) mock db:select → then-raise DB:CONNECTIVITY, assert error handler sets HTTP status 503; (3) use verify-call to assert an audit logger flow-ref fired exactly once on success. Run mvn clean test and confirm all three pass.",
+        "deep_dive": "Full XML anatomy:\n<munit:test name=\"getCustomerFlow-success\">\n  <munit:behavior>\n    <munit-tools:mock-when processor=\"db:select\">\n      <munit-tools:with-attributes>\n        <munit-tools:with-attribute name=\"doc:name\" value=\"Query Legacy DB\"/>\n      </munit-tools:with-attributes>\n      <munit-tools:then-return>\n        <munit-tools:payload value=\"#[[{id:'001',name:'Arjun'}]]\" mediaType=\"application/java\"/>\n      </munit-tools:then-return>\n    </munit-tools:mock-when>\n  </munit:behavior>\n  <munit:execution>\n    <flow-ref name=\"getCustomerFlow\"/>\n  </munit:execution>\n  <munit:validation>\n    <munit-tools:assert-that expression=\"#[payload.message]\" is=\"#[MunitTools::equalTo('Event received successfully')]\"/>\n  </munit:validation>\n</munit:test>\n\nTest naming convention: {flowName}-{scenario}-test. Suite-level before/after for DB seed/teardown. Coverage: munit-coverage-report plugin with applicationCoverageFlowThreshold=80 in pom.xml."
+      },
+      "quiz": [
+        {
+          "id": "DEV-005-q1",
+          "q": "You have two db:select processors in one flow. How do you ensure only the first one is mocked?",
+          "options": [
+            "Mock both with the same payload",
+            "Narrow mock-when with a with-attribute on doc:name matching only the first processor's name",
+            "Use flow-ref to mock individual steps",
+            "MUnit auto-disambiguates by order"
+          ],
+          "answer": 1,
+          "explanation": "with-attribute on doc:name (or any XML attribute) scopes the mock to that specific processor instance."
+        },
+        {
+          "id": "DEV-005-q2",
+          "q": "How do you test that your error handler correctly handles DB:CONNECTIVITY in MUnit?",
+          "options": [
+            "Shut down the database",
+            "Use then-raise inside mock-when to inject DB:CONNECTIVITY, then assert-that on the error handler's output payload",
+            "Set a breakpoint",
+            "You can't test error paths with MUnit"
+          ],
+          "answer": 1,
+          "explanation": "then-raise lets mocks inject any error type without needing a real failure condition."
+        },
+        {
+          "id": "DEV-005-q3",
+          "q": "Which MUnit tool verifies a Salesforce connector fired exactly once during a flow execution?",
+          "options": [
+            "assert-that with equalTo(1)",
+            "verify-call with times(1)",
+            "mock-when with a counter",
+            "set-event"
+          ],
+          "answer": 1,
+          "explanation": "verify-call is the execution-count assertion tool; assert-that is for payload/value matching."
+        }
+      ],
+      "difficulty": "intermediate",
+      "prerequisites": ["DEV-002"],
+      "ai_tags": ["munit", "mock-when", "assert-that", "verify-call", "test-xml"]
+    }
   ],
   "side_quests": [
     {

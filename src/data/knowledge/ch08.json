@@ -243,6 +243,12 @@
       "title": "The Conformance Crusade",
       "description": "Author a custom governance ruleset with 3 org rules (security scheme mandatory, version in path, contact info present), apply it to your Exchange specs, and produce a conformance report. Fix violations until 100%.",
       "xp": 150
+    },
+    {
+      "quest_id": "GOV-SQ3",
+      "title": "SIMULATION: Governance Firewall",
+      "description": "Incident scenario — your public orders API is being hammered by an unknown client: 2,000 req/min, no credentials, causing 503s for legitimate consumers.\n\nYou must stop it by configuring the correct API Manager policy sequence. Three options presented:\n\nA) IP Blocklist only\nB) Client ID Enforcement → Rate Limiting (SLA-based) → Spike Control\nC) Rate Limiting → Client ID Enforcement\n\nTask: explain why B is correct and the others fail:\n- A: IP blocklist alone — attacker rotates IPs, problem persists\n- C: Rate limiting before auth — anonymous requests burn legitimate consumers' quota windows\n- B: Auth first (Client ID) identifies consumers, SLA rate limiting gives each their tier allowance, Spike Control protects the backend from bursts even from valid consumers\n\nImplement option B: create 2 SLA tiers (Anonymous blocked by Client ID enforcement, Partner=500/min), apply in the correct order, load-test with ab or curl loops to prove 429s fire correctly. Capture X-RateLimit-Remaining headers as evidence.",
+      "xp": 200
     }
   ],
   "boss": {

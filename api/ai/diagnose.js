@@ -4,6 +4,23 @@
 
 import { callClaude, extractJson } from '../_lib/claude.js'
 
+// Verify the Supabase JWT so random internet traffic can't drain the Anthropic budget.
+async function verifySupabaseJwt(authHeader) {
+  if (!authHeader?.startsWith('Bearer ')) return false
+  const token = authHeader.slice(7)
+  const supabaseUrl = process.env.VITE_SUPABASE_URL
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY
+  if (!supabaseUrl || !serviceKey) return false
+  try {
+    const res = await fetch(`${supabaseUrl}/auth/v1/user`, {
+      headers: { Authorization: `Bearer ${token}`, apikey: serviceKey }
+    })
+    return res.ok
+  } catch {
+    return false
+  }
+}
+
 const SYSTEM_PROMPT = `You are the adaptive learning engine inside MuleQuest, a gamified MuleSoft training platform that takes developers from zero to MCIA certification. The learner is an experienced integration developer — speak to a practitioner, not a beginner. Be direct and specific; never pad or pacify.
 
 You receive a learner's performance history and a trigger event. Respond ONLY with a JSON object, no prose outside it:
@@ -33,6 +50,11 @@ Rules:
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' })
+  }
+
+  const authed = await verifySupabaseJwt(req.headers.authorization)
+  if (!authed) {
+    return res.status(401).json({ error: 'Unauthorized' })
   }
 
   try {

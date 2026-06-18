@@ -1,6 +1,6 @@
 {
   "cert_id": "MCD-L2",
-  "description": "MuleSoft Certified Developer — Level 2 mock. Advanced error handling, batch processing, security (OAuth/JWT/TLS), API governance, CloudHub/RTF deployment, and MuleSoft architecture patterns. Exam conditions: no feedback until the end.",
+  "description": "Salesforce Certified MuleSoft Developer II mock exam. Advanced error handling, batch processing, security (OAuth/JWT/TLS), API governance, CloudHub/RTF deployment, and MuleSoft architecture patterns. Managed via Salesforce Webassessor/Trailhead since May 2024. Exam conditions: no feedback until the end.",
   "questions": [
     { "id": "L2-001", "category": "Error Handling", "q": "Which error handler type continues flow execution after handling the error?", "options": ["on-error-propagate", "on-error-continue", "try-catch", "error-scope"], "answer": 1, "explanation": "on-error-continue suppresses the error and continues execution; propagate re-raises it." },
     { "id": "L2-002", "category": "Error Handling", "q": "An on-error-propagate inside a Try scope catches a VALIDATION error. After the handler runs, what happens?", "options": ["Flow resumes after the Try scope", "The error is re-raised to the parent error handler", "The flow returns 200", "The error is swallowed"], "answer": 1, "explanation": "propagate always re-raises — the error bubbles to the next handler up the chain." },

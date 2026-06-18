@@ -264,12 +264,12 @@ export function GameProvider({ children }) {
   const value = useMemo(() => ({
     ready, profile, progress, inventory, diagnosis, certTrials, aiBusy, toast,
     questStatus, chapterStats, chapterUnlocked, certGateState, certPassed,
-    awardXp, completeQuiz, completeLab, completeSideQuest, completeBoss,
+    awardXp, setQuest, completeQuiz, completeLab, completeSideQuest, completeBoss,
     recordCertTrial, completeMicroQuest, completeDungeon, triggerAI, touchStreak
   }), [
     ready, profile, progress, inventory, diagnosis, certTrials, aiBusy, toast,
     questStatus, chapterStats, chapterUnlocked, certGateState, certPassed,
-    awardXp, completeQuiz, completeLab, completeSideQuest, completeBoss,
+    awardXp, setQuest, completeQuiz, completeLab, completeSideQuest, completeBoss,
     recordCertTrial, completeMicroQuest, completeDungeon, triggerAI, touchStreak
   ])
 

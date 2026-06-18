@@ -406,6 +406,12 @@
       "title": "Module of Power",
       "description": "Extract your five most-reused transforms from work into a proper DW module library with overloads + documentation comments, package it in a Mule project, and write MUnit tests asserting each function. This becomes a real asset for your team.",
       "xp": 150
+    },
+    {
+      "quest_id": "DW-SQ3",
+      "title": "SIMULATION: The Code Debug Task",
+      "description": "Debug challenge — find and fix all 4 bugs in this broken DataWeave against the input below:\n\nInput: [{\"id\":\"001\",\"name\":\"Arjun\",\"role\":\"Dev\",\"active\":true,\"billing\":{\"amt\":500}},{\"id\":\"002\",\"name\":\"Sarah\",\"role\":\"Arch\",\"active\":true,\"billing\":{\"amt\":1200}},{\"id\":\"003\",\"name\":\"John\",\"role\":\"Dev\",\"active\":false,\"billing\":{\"amt\":300}}]\n\nBroken script:\n%dw 2.0\noutput application/json\nvar premiumThreshold = 1000\n---\npayload\n  filter (item) -> item.active = true\n  groupBy (item) -> item.roles\n  mapObject (usersInRole, roleName) -> {\n    (roleName): usersInRole map (user) -> {\n      uid: user.id,\n      uname: upper(users.name),\n      tier: if(user.billing.amount > premiumThreshold) \"PREMIUM\" else \"STANDARD\"\n    }\n  }\n\nExpected: active users grouped by role, names uppercased, PREMIUM if billing.amt > 1000.\nHint: 4 bugs — one operator, one field name typo, one variable name typo, one nested field name typo. Find all four before checking answers.",
+      "xp": 180
     }
   ],
   "boss": {

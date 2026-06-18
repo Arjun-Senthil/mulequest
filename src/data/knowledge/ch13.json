@@ -281,6 +281,63 @@
       "difficulty": "advanced",
       "prerequisites": ["AIF-001"],
       "ai_tags": ["inference-connector", "vector-connector", "einstein-trust-layer", "agentforce", "mule-4-11"]
+    },
+    {
+      "concept_id": "AIF-006",
+      "title": "MuleSoft Agent Fabric: MCP Bridges, Agentforce Actions & MuleSoft Vibes",
+      "card": {
+        "what": "Three 2025 paradigm shifts in how AI and MuleSoft integrate: (1) MCP Bridges — expose any Mule Experience API as a callable tool for LLMs via Model Context Protocol; (2) Agentforce Actions — convert standard RAML/OAS-documented APIs into self-describing AI-executable functions that Agentforce agents discover and invoke autonomously; (3) MuleSoft Vibes — natural-language intent-driven flow authoring inside Anypoint Code Builder.",
+        "how": "MCP Bridge: Anypoint API Gateway publishes an MCP-compliant endpoint listing tools (your APIs) with descriptions parsed from OAS spec metadata. Any LLM (Claude, GPT-4, etc.) connecting to that endpoint can discover, call, and chain your APIs as tools — no hardcoded integration flows needed on the AI side.\n\nAgentforce Actions: publish an API to Exchange with complete OAS documentation (operation descriptions, parameter descriptions, response schemas). Agentforce parses the spec at design time, generates callable tool definitions, and can invoke the API in context during an agent session. The richer your OAS docs, the better Agentforce's tool understanding.\n\nMuleSoft Vibes: natural-language → flow layout in ACB. Describe what you need ('call Salesforce, get account by ID, transform to standard schema, send to Kafka') and ACB generates the flow skeleton. You review and refine. Reduces boilerplate setup time; does NOT replace understanding connectors and DataWeave.",
+        "exam_traps": [
+          "MCP Bridge exposes EXISTING APIs as AI tools — it does not build new integration logic. The API still needs to be designed, built, and deployed normally first; MCP makes it discoverable to LLMs.",
+          "Agentforce Actions require COMPLETE OAS documentation — undocumented parameters or missing descriptions degrade the agent's ability to call the API correctly. 'AI-ready APIs' means spec quality, not just functionality.",
+          "MuleSoft Vibes generates SCAFFOLDING — it doesn't write production DataWeave, handle error scenarios, or configure connectors with auth. You validate and complete the generated flow.",
+          "These are agentic ORCHESTRATION patterns (AI calls APIs), not the AI connector patterns (Mule calls AI). The direction of control is reversed — the LLM is the orchestrator; Mule APIs are the tools."
+        ],
+        "hands_on": "Build an 'AI-ready' customer API: (1) spec it in Design Center with rich OAS descriptions on every operation and parameter; (2) publish to Exchange; (3) in Anypoint Studio or ACB, use the Agentforce Connector to invoke a simple Agentforce agent that uses your API as an action — observe how the agent parses the spec to decide when and how to call it. If you have ACB access, try MuleSoft Vibes on a simple integration scenario and compare the generated skeleton against what you'd write manually.",
+        "deep_dive": "The agentic architecture shift: traditional integration is flow-based (fixed paths, explicit logic). Agentic integration is goal-based (describe intent, AI plans and executes the tool sequence). MuleSoft's role evolves: APIs remain the integration backbone, but the orchestration layer moves from Mule flows to AI agents. This means API design quality (discoverability, description clarity, idempotency, predictable contracts) matters MORE in an agentic world — ambiguous APIs confuse agents.\n\nMCP (Model Context Protocol) standardizes how LLMs discover and call external tools — Anthropic, OpenAI, Google all support it. Anypoint's MCP implementation lets the gateway serve as the tool registry for any compliant LLM. One API platform becomes the tool store for your entire AI ecosystem.\n\nFor MCIA: position MCP bridges as the enterprise-scale approach for AI-to-API integration (governed, discoverable, versioned). Agentforce Actions as the Salesforce-ecosystem-specific pattern. Vibes as a developer productivity feature, not an architecture decision."
+      },
+      "quiz": [
+        {
+          "id": "AIF-006-q1",
+          "q": "Agentforce must autonomously call your order status API. What makes the API 'Agentforce-ready'?",
+          "options": [
+            "Adding a custom Agentforce header to HTTP responses",
+            "Publishing to Exchange with complete OAS documentation — rich operation/parameter descriptions Agentforce parses to understand when and how to call it",
+            "Deploying to CloudHub 2.0",
+            "Using the Agentforce Connector inside the API flow"
+          ],
+          "answer": 1,
+          "explanation": "Agentforce reads the spec to understand the API's purpose and parameters. Spec quality IS the integration contract for AI consumers."
+        },
+        {
+          "id": "AIF-006-q2",
+          "q": "An LLM needs to call five of your Mule Experience APIs as tools without custom integration code. The correct MuleSoft mechanism?",
+          "options": [
+            "Build five Mule flows that call the LLM provider's API",
+            "Expose the APIs via an MCP Bridge — the LLM discovers and calls them as tools using the Model Context Protocol",
+            "Use the Inference Connector in reverse",
+            "Deploy the LLM inside Mule runtime"
+          ],
+          "answer": 1,
+          "explanation": "MCP Bridge inverts the direction — the LLM is the orchestrator, your published APIs are the tools. No new integration flows needed."
+        },
+        {
+          "id": "AIF-006-q3",
+          "q": "MuleSoft Vibes in Anypoint Code Builder generates:",
+          "options": [
+            "Production-ready flows with complete DataWeave and error handling",
+            "A flow skeleton / scaffold from natural-language intent — requires developer review, connector config, and DataWeave completion",
+            "Agentforce agent definitions",
+            "RAML specs from running flows"
+          ],
+          "answer": 1,
+          "explanation": "Vibes is a scaffolding accelerator, not an autonomous developer. It reduces setup boilerplate; you complete and validate the output."
+        }
+      ],
+      "difficulty": "advanced",
+      "prerequisites": ["AIF-005"],
+      "ai_tags": ["mcp-bridge", "agentforce-actions", "mulesoft-vibes", "agentic-integration", "anypoint-code-builder"]
     }
   ],
   "side_quests": [
